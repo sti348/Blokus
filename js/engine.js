@@ -26,7 +26,7 @@
     { color: 'red', label: '红' },
     { color: 'green', label: '绿' },
     { color: 'violet', label: '紫' },
-    { color: 'white', label: '白' }
+    { color: 'orange', label: '橙' }
   ];
 
   var MODES = {

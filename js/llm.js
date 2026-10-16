@@ -24,7 +24,7 @@
   // 候选：与最佳一步的推演结果差不超过 MARGIN，最多 MAX_CANDIDATES 个（自对弈里总选最差的一步也接近大师）
   var MARGIN = 0.6;
   var MAX_CANDIDATES = 4;
-  var LETTER = { blue: 'B', yellow: 'Y', red: 'R', green: 'G', violet: 'V', orange: 'O', white: 'W' };
+  var LETTER = { blue: 'B', yellow: 'Y', red: 'R', green: 'G', violet: 'V', orange: 'O' };
 
   function defaults() {
     return {

@@ -88,8 +88,7 @@
         red: get('--p-red'),
         green: get('--p-green'),
         violet: get('--p-violet'),
-        orange: get('--p-orange'),
-        white: get('--p-white')
+        orange: get('--p-orange')
       }
     };
     themeVersion++;
