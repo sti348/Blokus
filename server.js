@@ -3,6 +3,7 @@
  * 角斗士棋联机服务器（无第三方依赖）。
  *   node server.js            默认监听 0.0.0.0:8080
  *   PORT=3000 node server.js  换端口
+ *   LLM_PROXY=1 node server.js  开启大模型转发（给不允许网页直连的接口用）
  *
  * 提供静态页面和联机接口：
  *   GET  /api/info                     探测服务器
@@ -10,7 +11,8 @@
  *   GET  /api/rooms/:code/stream       SSE 推送房间状态（?token=）
  *   POST /api/rooms/:code/op           房间操作 { token, op }
  *   POST /api/rooms/:code/preview      当前玩家正在尝试的位置 { token, preview }（只转发，不保存）
- * 服务器用规则引擎校验每一步，并负责电脑玩家的回合。
+ *   POST /api/llm                      大模型转发 { url, key, body }（默认关闭）
+ * 服务器用规则引擎校验每一步，并负责电脑玩家的回合；「大模型」电脑由房主的浏览器调用模型后落子。
  */
 'use strict';
 
@@ -29,6 +31,14 @@ const MAX_CLIENTS_PER_ROOM = 32;
 const MAX_BODY = 16 * 1024;
 const IDLE_ROOM_MS = 30 * 60 * 1000;
 let AI_DELAY = { fast: 250, normal: 650, slow: 1200 };
+// 「大模型」电脑等房主的浏览器落子，超时由服务器用困难电脑代下
+let LLM_WAIT_MS = 150 * 1000;
+let llmProxyOn = process.env.LLM_PROXY === '1';
+const LLM_MAX_BODY = 256 * 1024;
+const LLM_MAX_RESPONSE = 2 * 1024 * 1024;
+const LLM_MAX_ACTIVE = 8;
+const LLM_TIMEOUT_MS = 300 * 1000;
+let llmActive = 0;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -60,13 +70,13 @@ function sendJson(res, status, body) {
   res.end(data);
 }
 
-function readJson(req) {
+function readJson(req, limit) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > (limit || MAX_BODY)) {
         reject(Object.assign(new Error('too large'), { status: 413 }));
         req.destroy();
         return;
@@ -120,10 +130,12 @@ function scheduleAI(entry) {
   const pl = room.game.config.players[state.current];
   if (pl.type !== 'ai') return;
   const rev = room.rev;
+  const llm = pl.level === 'llm';
+  const runner = llm ? Online.aiRunner(room, onlinePids(entry)) : null;
   entry.aiTimer = setTimeout(() => {
     if (!rooms.has(room.code) || entry.room.rev !== rev) return;
     const st = Online.gameState(entry.room);
-    const move = AI.chooseMove(st, pl.level || 'normal');
+    const move = AI.chooseMove(st, llm ? 'hard' : pl.level || 'normal');
     const action = move ? Object.assign({ type: 'place' }, move) : { type: 'resign' };
     const result = Online.applyOp(entry.room, { type: 'act', at: st.actions.length, action }, Online.SYSTEM, {
       now: Date.now(),
@@ -132,7 +144,50 @@ function scheduleAI(entry) {
     });
     if (result.room) commit(entry, result);
     else console.warn('[ai] %s: %s', room.code, result.error);
-  }, AI_DELAY[room.speed] || AI_DELAY.normal);
+  }, runner ? LLM_WAIT_MS : AI_DELAY[room.speed] || AI_DELAY.normal);
+}
+
+function currentIsLLM(entry) {
+  const room = entry.room;
+  if (room.status !== 'playing' || !room.game) return false;
+  const st = Online.gameState(room);
+  const pl = room.game.config.players[st.current];
+  return !st.over && pl.type === 'ai' && pl.level === 'llm';
+}
+
+// 大模型转发（默认关闭）：有些接口不允许网页直接访问（跨域），由服务器代发
+async function llmProxy(req, res) {
+  if (!llmProxyOn) return sendJson(res, 404, { error: { message: '服务器没有开启大模型转发（用 LLM_PROXY=1 启动）' } });
+  const body = await readJson(req, LLM_MAX_BODY);
+  let target;
+  try {
+    target = new URL(String(body.url || ''));
+  } catch (e) {
+    return sendJson(res, 400, { error: { message: '接口地址无效' } });
+  }
+  if (!/^https?:$/.test(target.protocol) || !/\/chat\/completions$/.test(target.pathname)) {
+    return sendJson(res, 400, { error: { message: '只能转发到 …/chat/completions' } });
+  }
+  if (!body.body || typeof body.body !== 'object') return sendJson(res, 400, { error: { message: '缺少请求内容' } });
+  if (llmActive >= LLM_MAX_ACTIVE) return sendJson(res, 429, { error: { message: '转发中的请求太多，请稍后再试' } });
+  llmActive++;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), LLM_TIMEOUT_MS);
+  res.on('close', () => { if (!res.writableEnded) ctl.abort(); });
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (typeof body.key === 'string' && body.key) headers.Authorization = 'Bearer ' + body.key;
+    const up = await fetch(target, { method: 'POST', headers, body: JSON.stringify(body.body), signal: ctl.signal, redirect: 'error' });
+    const text = await up.text();
+    if (text.length > LLM_MAX_RESPONSE) return sendJson(res, 502, { error: { message: '接口返回的内容太大' } });
+    res.writeHead(up.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(text);
+  } catch (e) {
+    if (!res.headersSent) sendJson(res, 502, { error: { message: ctl.signal.aborted ? '转发超时' : '服务器连不上接口：' + e.message } });
+  } finally {
+    clearTimeout(timer);
+    llmActive--;
+  }
 }
 
 async function createRoom(req, res) {
@@ -168,6 +223,8 @@ function stream(req, res, entry, token) {
     entry.clients.delete(client);
     entry.lastActive = Date.now();
     broadcastPeers(entry);
+    // 正在替大模型电脑落子的人掉线了：重新安排（没人能接手时由服务器代下）
+    if (currentIsLLM(entry)) scheduleAI(entry);
   });
 }
 
@@ -250,7 +307,8 @@ function serveStatic(req, res, pathname) {
 async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
-  if (p === '/api/info' && req.method === 'GET') return sendJson(res, 200, { blokus: 1, rooms: rooms.size });
+  if (p === '/api/info' && req.method === 'GET') return sendJson(res, 200, { blokus: 1, rooms: rooms.size, llmProxy: llmProxyOn });
+  if (p === '/api/llm' && req.method === 'POST') return llmProxy(req, res);
   if (p === '/api/rooms' && req.method === 'POST') return createRoom(req, res);
   const one = /^\/api\/rooms\/([A-Za-z0-9]{5})$/.exec(p);
   if (one && req.method === 'GET') {
@@ -278,6 +336,8 @@ async function handle(req, res) {
 
 function start(port, host, opts) {
   if (opts && opts.aiDelay != null) AI_DELAY = { fast: opts.aiDelay, normal: opts.aiDelay, slow: opts.aiDelay };
+  if (opts && opts.llmWait != null) LLM_WAIT_MS = opts.llmWait;
+  if (opts && opts.llmProxy != null) llmProxyOn = !!opts.llmProxy;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       if (!res.headersSent) sendJson(res, err.status || 500, { error: err.status ? err.message : '服务器出错了' });

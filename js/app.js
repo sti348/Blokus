@@ -7,6 +7,7 @@
   var Pieces = BlokusPieces;
   var Engine = BlokusEngine;
   var AI = BlokusAI;
+  var LLM = BlokusLLM;
   var Online = BlokusOnline;
   var Net = BlokusNet;
   var EMPTY = Engine.EMPTY;
@@ -20,7 +21,7 @@
     cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。',
     prism: '三角格版的立体玩法：六边形地面由三角形组成，每格是一个三棱柱，棋子落下堆叠。自己的棋子不能面贴面，必须棱或角相接。每人 19 块三棱柱棋子（1–4 格）。'
   };
-  var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难' };
+  var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难', llm: '大模型' };
   var SPEED_MS = { fast: 200, normal: 550, slow: 1100 };
   var REASON_TEXT = {
     used: '这块棋子已经用过了',
@@ -38,6 +39,7 @@
   var STORE_SAVE = 'blokus.save.v1';
   var STORE_ONLINE = 'blokus.online.v1';
   var STORE_TOKENS = 'blokus.tokens.v1';
+  var STORE_LLM = 'blokus.llm.v1';
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
 
@@ -673,7 +675,11 @@
         });
       });
       li.querySelectorAll('input[name="seat-level-' + i + '"]').forEach(function (r) {
-        r.addEventListener('change', function () { s.level = r.value; savePrefs(); });
+        r.addEventListener('change', function () {
+          s.level = r.value;
+          savePrefs();
+          if (r.value === 'llm') ensureLLMSetup();
+        });
       });
       list.appendChild(li);
     });
@@ -703,6 +709,179 @@
     });
     if (entries.length < 2) return null;
     return Engine.buildConfig(mode, entries);
+  }
+
+  /* ================= 大模型电脑 ================= */
+
+  var llm = { settings: LLM.normalizeSettings(load(STORE_LLM)), saved: !!load(STORE_LLM), sample: null, sampleP: null, lastError: '' };
+
+  function inClaudePage() {
+    return !!window.claude && typeof window.claude.use === 'function';
+  }
+
+  // Claude 发布的页面自带的 Claude（页面没有声明或不在查看器里时为 null）
+  function claudeSample() {
+    if (!llm.sampleP) {
+      llm.sampleP = !inClaudePage() ? Promise.resolve(null) : Promise.resolve(window.claude.use('sample')).then(function (fn) {
+        llm.sample = typeof fn === 'function' ? fn : null;
+        return llm.sample;
+      }, function () { return null; });
+    }
+    return llm.sampleP;
+  }
+
+  // 在 Claude 发布的页面里、还没保存过设置时，默认用页面自带的 Claude（页面不能访问外部网络）
+  function llmSettings() {
+    if (!llm.saved && llm.sample) {
+      var s = LLM.normalizeSettings(llm.settings);
+      s.provider = 'claude';
+      return s;
+    }
+    return llm.settings;
+  }
+
+  function llmReady() {
+    var s = llmSettings();
+    return LLM.isReady(s) && (s.provider !== 'claude' || !!llm.sample);
+  }
+
+  function llmEnv(signal) {
+    return { signal: signal, sample: llm.sample, proxy: netInfo.net && netInfo.net.llmProxy ? 'api/llm' : null };
+  }
+
+  /**
+   * 让大模型替当前电脑选一步。结果 { move, note } 或 { error }（调用方改用困难电脑）；
+   * 没有合法落子时 move 为 null。被取消时 Promise 失败。
+   */
+  function llmChoose(st, signal) {
+    return claudeSample().then(function () {
+      if (!llmReady()) return { move: null, error: 'setup', setup: true };
+      return LLM.decide(st, llmSettings(), llmEnv(signal)).then(function (r) {
+        if (r.asked) llm.lastError = '';
+        return { move: r.move, note: r.reason || '' };
+      }, function (err) {
+        if (err && err.code === 'cancelled') throw err;
+        return { move: null, error: (err && err.message) || '调用失败' };
+      });
+    });
+  }
+
+  // 同样的错误只提示一次
+  function reportLLMError(r) {
+    var msg = r.setup
+      ? '还没设置好大模型，先由困难电脑代下（开局页面的「大模型设置」）'
+      : '大模型出错：' + r.error + '。这一步由困难电脑代下';
+    if (msg === llm.lastError) return;
+    llm.lastError = msg;
+    toast(msg, 'warn');
+  }
+
+  function ensureLLMSetup() {
+    claudeSample().then(function () { if (!llmReady()) openLlmDialog(); });
+  }
+
+  function lastNote(st, p) {
+    for (var i = st.actions.length - 1; i >= 0; i--) {
+      if (st.actions[i].player === p) return st.actions[i].note || '';
+    }
+    return '';
+  }
+
+  // 重放时带上大模型落子附带的那句话
+  function replayWithNotes(config, actions) {
+    var st = Engine.replay(config, actions);
+    for (var i = 0; i < st.actions.length; i++) {
+      var a = actions[i];
+      if (a && typeof a.note === 'string' && a.note) st.actions[i].note = a.note.slice(0, 60);
+    }
+    return st;
+  }
+
+  function llmProviderValue() {
+    var r = document.querySelector('input[name="llm-provider"]:checked');
+    return r ? r.value : 'openai';
+  }
+
+  function syncLlmProvider() {
+    var claude = llmProviderValue() === 'claude';
+    $('llm-openai').hidden = claude;
+    $('llm-claude').hidden = !claude;
+    $('llm-artifact-note').hidden = claude || !inClaudePage();
+  }
+
+  function setLlmStatus(text, kind) {
+    var el = $('llm-status');
+    el.textContent = text;
+    el.className = 'llm-status' + (kind ? ' ' + kind : '');
+  }
+
+  function readLlmForm() {
+    return LLM.normalizeSettings({
+      provider: llmProviderValue(),
+      baseUrl: $('llm-url').value,
+      apiKey: $('llm-key').value,
+      model: $('llm-model').value,
+      tier: $('llm-tier').value,
+      timeout: $('llm-timeout').value
+    });
+  }
+
+  function openLlmDialog() {
+    var s = llmSettings();
+    $('llm-provider-field').hidden = !inClaudePage();
+    $('llm-provider-claude').disabled = !llm.sample;
+    $('llm-provider-' + (s.provider === 'claude' && llm.sample ? 'claude' : 'openai')).checked = true;
+    $('llm-url').value = s.baseUrl;
+    $('llm-key').value = s.apiKey;
+    $('llm-model').value = s.model;
+    $('llm-tier').value = s.tier;
+    $('llm-timeout').value = s.timeout;
+    setLlmStatus('', '');
+    syncLlmProvider();
+    openDialog('llm-dialog');
+  }
+
+  function llmFormProblem(s) {
+    if (s.provider === 'claude') return llm.sample ? '' : '这个页面现在用不了 Claude';
+    if (!s.baseUrl && !s.model) return '请填写接口地址和模型';
+    if (!/^https?:\/\/[^\s]+$/i.test(s.baseUrl)) return '接口地址要以 http:// 或 https:// 开头';
+    if (!s.model) return '请填写模型名';
+    return '';
+  }
+
+  function bindLlmDialog() {
+    document.querySelectorAll('.llm-open').forEach(function (b) {
+      b.addEventListener('click', function () { claudeSample().then(openLlmDialog); });
+    });
+    document.querySelectorAll('input[name="llm-provider"]').forEach(function (r) {
+      r.addEventListener('change', function () { syncLlmProvider(); setLlmStatus('', ''); });
+    });
+    $('llm-form').addEventListener('submit', function (e) { e.preventDefault(); });
+    $('llm-cancel').addEventListener('click', function () { closeDialog('llm-dialog'); });
+    $('llm-save').addEventListener('click', function () {
+      var s = readLlmForm();
+      var problem = s.provider === 'openai' && !s.baseUrl && !s.model ? '' : llmFormProblem(s);
+      if (problem) { setLlmStatus(problem, 'err'); return; }
+      llm.settings = s;
+      llm.saved = true;
+      llm.lastError = '';
+      save(STORE_LLM, s);
+      closeDialog('llm-dialog');
+      toast(llmReady() ? '已保存大模型设置' : '已清空大模型设置');
+    });
+    $('llm-test').addEventListener('click', function () {
+      var s = readLlmForm();
+      var problem = llmFormProblem(s);
+      if (problem) { setLlmStatus(problem, 'err'); return; }
+      var btn = $('llm-test');
+      btn.disabled = true;
+      setLlmStatus('正在连接…', '');
+      LLM.ping(s, llmEnv(null)).then(function (r) {
+        setLlmStatus('连接成功，用时 ' + (r.ms / 1000).toFixed(1) + ' 秒' + (r.text ? '。模型回复：' + r.text : ''), 'ok');
+      }, function (err) {
+        setLlmStatus((err && err.message) || '连接失败', 'err');
+      }).then(function () { btn.disabled = false; });
+    });
   }
 
   /* ================= 演示局 ================= */
@@ -849,7 +1028,7 @@
     game.mode = mode;
     game.config = config;
     game.gameId = gameId || null;
-    game.state = actions && actions.length ? Engine.replay(config, actions) : Engine.createGame(config);
+    game.state = actions && actions.length ? replayWithNotes(config, actions) : Engine.createGame(config);
     game.eventCursor = game.state.events.length;
     game.paused = false;
     game.anim = null;
@@ -858,11 +1037,14 @@
     resetSelection();
     showScreen('game');
     if (game.trayKind !== game.state.set.kind) buildTray();
-    applyModeControls();
     if (!game.view) {
       game.view = new BoardView($('board'), function () { return game.state; }, gameOverlay);
       new ResizeObserver(function () { if (game.view.resize()) game.view.draw(); }).observe($('board'));
     }
+    // 透视默认关闭；同一局联机重新同步时保持原样
+    if (!gameId || gameId !== game.seenGameId) game.view.xray = false;
+    game.seenGameId = gameId || null;
+    applyModeControls();
     game.view.resize();
     saveGame();
     onTurnStart(true);
@@ -918,6 +1100,8 @@
   function cancelAI() {
     clearTimeout(game.aiTimer);
     game.aiToken++;
+    if (game.aiAbort) game.aiAbort.abort();
+    game.aiAbort = null;
   }
 
   function turnKeyOf() {
@@ -973,6 +1157,10 @@
     game.aiTimer = setTimeout(function () {
       if (token !== game.aiToken || !isLocalAITurn()) return;
       var st = game.state;
+      if (cur().level === 'llm') {
+        runLocalLLM(token);
+        return;
+      }
       var move = AI.chooseMove(st, cur().level);
       if (!move) {
         Engine.applyAction(st, { type: 'resign' });
@@ -983,11 +1171,37 @@
     }, SPEED_MS[prefs.speed] || SPEED_MS.normal);
   }
 
-  function commitMove(move, byAI) {
+  // 大模型替本地电脑选一步
+  function runLocalLLM(token) {
+    var ctl = new AbortController();
+    game.aiAbort = ctl;
+    renderTurn();
+    llmChoose(game.state, ctl.signal).then(function (r) {
+      if (token !== game.aiToken || !isLocalAITurn()) return;
+      game.aiAbort = null;
+      var move = r.move;
+      if (r.error) {
+        reportLLMError(r);
+        move = AI.chooseMove(game.state, 'hard');
+      }
+      if (!move) {
+        Engine.applyAction(game.state, { type: 'resign' });
+        afterAction();
+        return;
+      }
+      commitMove(move, true, r.note);
+    }, function () { /* 已取消 */ });
+  }
+
+  function commitMove(move, byAI, note) {
     var st = game.state;
     var p = st.current;
     var reason = Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z });
     if (reason) return reason;
+    if (note) {
+      st.actions[st.actions.length - 1].note = note;
+      toast(st.players[p].name + '：' + note);
+    }
     game.anim = { cells: cellsToIdx(st, st.lastMove.cells), player: p, t0: performance.now() };
     sound('place', byAI && humanCount() > 0);
     afterAction();
@@ -1050,17 +1264,23 @@
     for (var i = 0; prefix && i < local.length; i++) if (!sameAction(local[i], remote[i])) prefix = false;
     if (prefix && remote.length > local.length) {
       var placed = false;
+      var said = null;
       for (var j = local.length; j < remote.length; j++) {
         if (Engine.applyAction(game.state, remote[j])) { prefix = false; break; }
         if (remote[j].type === 'place') placed = true;
+        if (remote[j].note) {
+          game.state.actions[j].note = remote[j].note;
+          said = remote[j];
+        }
       }
+      if (prefix && said && game.state.players[said.player]) toast(game.state.players[said.player].name + '：' + said.note);
       if (prefix && placed && game.state.lastMove) {
         game.anim = { cells: cellsToIdx(game.state, game.state.lastMove.cells), player: game.state.lastMove.player, t0: performance.now() };
         sound('place', true);
       }
     }
     if (!prefix) {
-      game.state = Engine.replay(g.config, remote);
+      game.state = replayWithNotes(g.config, remote);
       game.eventCursor = game.state.events.length;
       game.anim = null;
     }
@@ -1103,23 +1323,54 @@
     return null;
   }
 
-  // 共享存储模式下，电脑回合由房主（或在线玩家中的一位）代为落子
+  // 共享存储模式下，电脑回合由房主（或在线玩家中的一位）代为落子；
+  // 「大模型」电脑在两种联机方式下都由房主的浏览器调用模型（自建服务器只在等太久时代下）
   function maybeRunAI() {
-    if (!online || online.net.serverRunsAI) return;
+    if (!online) return;
     clearTimeout(online.aiTimer);
     var room = online.room;
     if (!room || room.status !== 'playing' || !isOnlineGame() || !game.state || game.state.over || online.pending) return;
     if (cur().type !== 'ai') return;
+    var llmSeat = cur().level === 'llm';
+    if (online.net.serverRunsAI && !llmSeat) return;
+    var at = game.state.actions.length;
+    if (online.aiBusy === at) return;
     var runner = Online.aiRunner(room, online.peers);
     var mine = runner === online.pid;
-    var delay = mine ? (SPEED_MS[room.speed] || SPEED_MS.normal) : 12000 + Math.random() * 4000;
-    var rev = room.rev;
+    if (online.net.serverRunsAI && !mine) return;
+    var delay = mine ? (SPEED_MS[room.speed] || SPEED_MS.normal) : (llmSeat ? 160000 : 12000) + Math.random() * 4000;
     var session = online;
+    function stale() {
+      return online !== session || !game.state || game.state.over || game.state.actions.length !== at || cur().type !== 'ai';
+    }
     online.aiTimer = setTimeout(function () {
-      if (online !== session || !online.room || online.room.rev !== rev || !game.state || game.state.over || cur().type !== 'ai') return;
-      var move = AI.chooseMove(game.state, cur().level);
-      var action = move ? { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z } : { type: 'resign' };
-      sendOp({ type: 'act', at: game.state.actions.length, action: action }, true).catch(function () {});
+      if (stale()) return;
+      var ask;
+      if (llmSeat && mine) {
+        online.aiBusy = at;
+        online.aiAbort = new AbortController();
+        renderTurn();
+        ask = llmChoose(game.state, online.aiAbort.signal);
+      } else {
+        ask = Promise.resolve({ move: AI.chooseMove(game.state, llmSeat ? 'hard' : cur().level), note: '' });
+      }
+      ask.then(function (r) {
+        if (online !== session) return;
+        if (online.aiBusy === at) {
+          online.aiBusy = -1;
+          online.aiAbort = null;
+        }
+        if (stale()) return;
+        var move = r.move;
+        if (r.error) {
+          reportLLMError(r);
+          move = AI.chooseMove(game.state, 'hard');
+        }
+        var action = move ? { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z } : { type: 'resign' };
+        var op = { type: 'act', at: at, action: action };
+        if (move && r.note) op.note = r.note;
+        sendOp(op, true).catch(function () {});
+      }, function () { /* 已取消 */ });
     }, delay);
   }
 
@@ -1210,6 +1461,19 @@
     return pv;
   }
 
+  // 透视时保持不透明的玩家：联机是自己的座位；本地是正在落子的玩家，电脑回合时是所有真人
+  function ownPlayers() {
+    var st = game.state, out = [];
+    if (isOnlineGame()) {
+      st.players.forEach(function (p, i) { if (p.owner && p.owner === myId()) out.push(i); });
+    } else if (!st.over && cur().type === 'human') {
+      out.push(st.current);
+    } else {
+      st.players.forEach(function (p, i) { if (p.type === 'human') out.push(i); });
+    }
+    return out;
+  }
+
   function remotePreviewSafe() { return game.state && isOnlineGame() ? remotePreview() : null; }
 
   function gameOverlay() {
@@ -1220,6 +1484,7 @@
     if (cube && game.view) {
       ov.slice = game.view.slice;
       ov.xray = game.view.xray;
+      ov.own = ownPlayers();
     }
     var rp = remotePreview();
     if (rp) {
@@ -1425,7 +1690,7 @@
     cancelAI();
     clearTimeout(game.endTimer);
     closeDialog('end-dialog');
-    game.state = Engine.replay(game.config, st.actions.slice(0, i));
+    game.state = replayWithNotes(game.config, st.actions.slice(0, i));
     game.eventCursor = game.state.events.length;
     game.anim = null;
     saveGame();
@@ -1551,7 +1816,7 @@
         text = '等待 ' + pl.name + '（' + pl.label + '方）落子' +
           (onlineMode && !isPeerOnline(pl.owner) ? ' · 已离线' : remotePreview() ? ' · 正在尝试摆放' : '');
       }
-      else text = pl.name + (game.paused ? ' · 已暂停' : ' 思考中…');
+      else text = pl.name + (game.paused ? ' · 已暂停' : pl.level === 'llm' ? ' 正在问大模型…' : ' 思考中…');
     }
     root.style.setProperty('--turn', color);
     $('turn-text').textContent = text;
@@ -1623,6 +1888,7 @@
         return '<i' + (pl.remaining[pi] ? '' : ' class="used"') + '>' + pieceIcon(st.set, pi) + '</i>';
       }).join('');
       var left = pl.remaining.filter(Boolean).length;
+      var note = lastNote(st, p);
       return '<div class="pcard' + (current ? ' current' : '') + (pl.done ? ' done' : '') + (viewing === pl ? ' viewing' : '') +
         '" style="--c:' + colorVar(pl) + '" data-player="' + p + '" role="button" tabindex="0"' +
         ' title="点击在托盘里查看剩余棋子" aria-label="' + escapeHtml(pl.name) + '，剩 ' + left + ' 块，点击查看">' +
@@ -1632,6 +1898,7 @@
         '<div class="pcard-bar" aria-hidden="true"><i style="--w:' + (placed / total * 100).toFixed(1) + '%"></i></div>' +
         '<div class="pcard-pieces" aria-hidden="true">' + pieces + '</div>' +
         '<div class="pcard-state">' + stateText + '</div>' +
+        (note ? '<div class="pcard-note" title="' + escapeHtml(note) + '">' + escapeHtml(note) + '</div>' : '') +
         '</div>';
     }).join('');
   }
@@ -1746,7 +2013,7 @@
     else d.removeAttribute('open');
   }
   function anyDialogOpen() {
-    return ['end-dialog', 'confirm-dialog', 'rules-dialog'].some(function (id) { return $(id).open; });
+    return ['end-dialog', 'confirm-dialog', 'rules-dialog', 'llm-dialog'].some(function (id) { return $(id).open; });
   }
 
   var confirmResolve = null;
@@ -1910,6 +2177,8 @@
         connected: true,
         pending: null,
         aiTimer: 0,
+        aiBusy: -1,
+        aiAbort: null,
         hostMissingSince: 0,
         hostTried: -1,
         autoClaim: !(opts && opts.autoClaim === false),
@@ -2021,6 +2290,7 @@
     online = null;
     clearInterval(o.tick);
     clearTimeout(o.aiTimer);
+    if (o.aiAbort) o.aiAbort.abort();
     clearTimeout(o.pvTimer);
     o.net.disconnect();
     if (!notify) o.net.opAt(o.code, o.token, { type: 'leave' }).catch(function () {});
@@ -2396,7 +2666,10 @@
       var t = e.target;
       $('lobby-error').hidden = true;
       if (t.dataset.kind) sendOp({ type: 'seat', seat: +t.dataset.kind, kind: t.value }).catch(renderLobby);
-      if (t.dataset.level) sendOp({ type: 'seat', seat: +t.dataset.level, level: t.value }).catch(renderLobby);
+      if (t.dataset.level) {
+        sendOp({ type: 'seat', seat: +t.dataset.level, level: t.value }).catch(renderLobby);
+        if (t.value === 'llm') ensureLLMSetup();
+      }
     });
     $('lobby-speed').addEventListener('change', function (e) { sendOp({ type: 'speed', speed: e.target.value }).catch(renderLobby); });
     $('lobby-nick').addEventListener('change', function (e) {
@@ -2417,6 +2690,7 @@
       b.addEventListener('click', function () { openDialog('rules-dialog'); });
     });
     $('rules-close').addEventListener('click', function () { closeDialog('rules-dialog'); });
+    bindLlmDialog();
 
     $('menu-btn').addEventListener('click', function () {
       if (isOnlineGame()) { leaveRoom(); return; }
@@ -2514,6 +2788,7 @@
   bindKeys();
   showScreen('setup');
   ensureNet();
+  claudeSample();
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function () { if (demo.view && demo.view.resize()) demo.view.draw(); });
   }

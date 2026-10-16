@@ -58,6 +58,16 @@
 
   // 快速估值：只看棋子附近（边相邻 + 角相邻）的局部变化
   function quickScore(state, p, move, ctx, w) {
+    var q = quickParts(state, p, move, ctx);
+    var early = 1 - ctx.phase;
+    return w.size * q.size * (1 + early) +
+      w.anchors * q.anchors +
+      w.block * q.blocked -
+      w.center * early * q.centerDist;
+  }
+
+  // size：格数；anchors：己方角点净增；blocked：占掉的对手角点；centerDist：离中心最近的距离
+  function quickParts(state, p, move, ctx) {
     var board = state.board, topo = state.topo;
     var cells = moveIndices(state, move);
     var n = cells.length;
@@ -86,12 +96,7 @@
     var after = 0;
     for (i = 0; i < region.length; i++) if (isAnchorAfter(board, topo, p, region[i])) after++;
     for (i = 0; i < n; i++) board[cells[i]] = EMPTY;
-
-    var early = 1 - ctx.phase;
-    return w.size * n * (1 + early) +
-      w.anchors * (after - before) +
-      w.block * blocked -
-      w.center * early * centerDist;
+    return { size: n, anchors: after - before, blocked: blocked, centerDist: centerDist };
   }
 
   // 对某玩家统计：可行步数，以及“仍有位置可放”的棋子格数
@@ -124,25 +129,32 @@
     }
   }
 
-  function deepScore(state, p, move, w) {
-    var size = state.set.pieces[move.piece].size;
+  // 落子后双方的机动性
+  function deepParts(state, p, move) {
     return withMove(state, p, move, function () {
       var mine = mobility(state, p);
-      var oppCount = 0, oppSquares = 0, opponents = 0;
+      var oppLog = 0, oppMoves = 0, oppSquares = 0, opponents = 0;
       state.players.forEach(function (pl, o) {
         if (o === p || pl.done) return;
         var m = mobility(state, o);
-        oppCount += Math.log(1 + m.count);
+        oppLog += Math.log(1 + m.count);
+        oppMoves += m.count;
         oppSquares += m.squares;
         opponents++;
       });
-      // 对手越少，压制单个对手的收益越大（双人对局是零和的）
-      var press = opponents ? 3 / opponents : 0;
-      return w.size * size +
-        w.mob * Math.log(1 + mine.count) +
-        w.reach * mine.squares -
-        press * (w.oppMob * oppCount + w.oppReach * oppSquares);
+      return { mine: mine, oppLog: oppLog, oppMoves: oppMoves, oppSquares: oppSquares, opponents: opponents };
     });
+  }
+
+  function deepScore(state, p, move, w, d) {
+    var size = state.set.pieces[move.piece].size;
+    d = d || deepParts(state, p, move);
+    // 对手越少，压制单个对手的收益越大（双人对局是零和的）
+    var press = d.opponents ? 3 / d.opponents : 0;
+    return w.size * size +
+      w.mob * Math.log(1 + d.mine.count) +
+      w.reach * d.mine.squares -
+      press * (w.oppMob * d.oppLog + w.oppReach * d.oppSquares);
   }
 
   var NORMAL_W = { size: 3, anchors: 1.2, block: 1.0, center: 0.35 };
@@ -193,6 +205,41 @@
   }
 
   /**
+   * 当前玩家最好的若干步（按困难电脑的估值从高到低），附带给人看的特征，供大模型挑选。
+   * 每项：{ move, score, size, anchors, blocked, myMoves, mySquares, oppMoves }
+   */
+  function rankMoves(state, limit) {
+    var p = state.current;
+    var moves = Engine.legalMoves(state, p);
+    if (!moves.length) return [];
+    var ctx = makeContext(state, p);
+    var early = 1 - ctx.phase;
+    var w = HARD_QUICK_W;
+    var scored = moves.map(function (m) {
+      var q = quickParts(state, p, m, ctx);
+      var quick = w.size * q.size * (1 + early) + w.anchors * q.anchors + w.block * q.blocked - w.center * early * q.centerDist;
+      return { move: m, quick: quick, q: q };
+    });
+    scored.sort(function (a, b) { return b.quick - a.quick; });
+    var top = scored.slice(0, Math.max(limit || 12, state.topo.kind === 'tri' ? 20 : 28));
+    var out = top.map(function (t) {
+      var d = deepParts(state, p, t.move);
+      return {
+        move: t.move,
+        score: deepScore(state, p, t.move, HARD_DEEP_W, d) + t.quick * 0.05,
+        size: t.q.size,
+        anchors: t.q.anchors,
+        blocked: t.q.blocked,
+        myMoves: d.mine.count,
+        mySquares: d.mine.squares,
+        oppMoves: d.oppMoves
+      };
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out.slice(0, limit || 12);
+  }
+
+  /**
    * 为当前玩家选择一步棋。无合法落子时返回 null。
    * opts.rng 可替换随机数源（用于测试）。
    */
@@ -211,6 +258,7 @@
   return {
     LEVELS: LEVELS,
     chooseMove: chooseMove,
+    rankMoves: rankMoves,
     // 暴露给调参脚本
     _weights: { NORMAL_W: NORMAL_W, HARD_QUICK_W: HARD_QUICK_W, HARD_DEEP_W: HARD_DEEP_W }
   };

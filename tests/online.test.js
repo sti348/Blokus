@@ -257,3 +257,134 @@ test('服务器：两名玩家 + 两个电脑完整打完一局', async (t) => {
   await b.waitFor((c) => c.room.status === 'lobby');
   assert.equal((await post(base, '/api/rooms/ZZZZZ/op', { token: tokA, op: { type: 'start' } })).status, 404);
 });
+
+/* ---------------- 大模型电脑 ---------------- */
+
+function llmRoom() {
+  let room = newRoom();
+  room = ok(Online.applyOp(room, { type: 'claim', seat: 1, name: '乙' }, GUEST));
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 0, kind: 'ai', level: 'llm' }, HOST));
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 2, kind: 'off' }, HOST));
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 3, kind: 'off' }, HOST));
+  return ok(Online.applyOp(room, { type: 'start' }, HOST));
+}
+
+test('房间：大模型电脑由房主代为落子，附带的话会清理', () => {
+  let room = llmRoom();
+  assert.equal(room.game.config.players[0].level, 'llm');
+  assert.equal(room.game.config.players[0].type, 'ai');
+  const a = firstMove(room);
+  // 只有替电脑落子的人（房主在线时是房主）可以替大模型电脑落子
+  assert.equal(Online.applyOp(room, { type: 'act', at: 0, action: a }, GUEST, { online: [HOST, GUEST] }).code, 'not_your_turn');
+  const note = '占住角落 并且' + '很长的理由'.repeat(20);
+  room = ok(Online.applyOp(room, { type: 'act', at: 0, action: a, note }, HOST, { online: [HOST, GUEST] }));
+  const rec = room.game.actions[0];
+  assert.ok(rec.note.startsWith('占住角落 并且'));
+  assert.ok(rec.note.length <= 60);
+  assert.equal(room.game.actions.length, 1);
+  // 房主不在线时由在线的玩家接手
+  let room2 = llmRoom();
+  assert.equal(Online.applyOp(room2, { type: 'act', at: 0, action: firstMove(room2) }, HOST, { online: [GUEST] }).code, 'not_your_turn');
+  room2 = ok(Online.applyOp(room2, { type: 'act', at: 0, action: firstMove(room2) }, GUEST, { online: [GUEST] }));
+  // 真人落子不能附带理由
+  const b = firstMove(room);
+  room = ok(Online.applyOp(room, { type: 'act', at: 1, action: b, note: '我也想说话' }, GUEST, { online: [HOST, GUEST] }));
+  assert.equal(room.game.actions[1].note, undefined);
+  // 普通电脑仍然只能由服务器或共享存储里的房主落子
+  let room3 = newRoom();
+  room3 = ok(Online.applyOp(room3, { type: 'claim', seat: 1, name: '乙' }, GUEST));
+  room3 = ok(Online.applyOp(room3, { type: 'seat', seat: 0, kind: 'ai', level: 'hard' }, HOST));
+  room3 = ok(Online.applyOp(room3, { type: 'start' }, HOST));
+  assert.equal(Online.applyOp(room3, { type: 'act', at: 0, action: firstMove(room3) }, HOST, { online: [HOST, GUEST] }).code, 'not_your_turn');
+  // 存储里的理由会被重新清理
+  const raw = JSON.parse(JSON.stringify(room));
+  raw.game.actions[0].note = '\u0007坏' + 'x'.repeat(100);
+  const norm = Online.normalizeRoom(raw);
+  assert.ok(norm.game.actions[0].note.startsWith('坏'));
+  assert.ok(norm.game.actions[0].note.length <= 60);
+  assert.equal(Online.normalizeRoom(Object.assign({}, raw, { seats: raw.seats.map((s) => Object.assign({}, s, { level: 'genius' })) })), null);
+});
+
+test('服务器：大模型电脑等房主落子，等太久由服务器代下；大模型转发', async (t) => {
+  // 假的 OpenAI 兼容接口
+  const http = require('http');
+  const upstream = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const data = JSON.parse(body);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content: 'auth=' + (req.headers.authorization || '') + ' model=' + data.model + ' path=' + req.url } }] }));
+    });
+  });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  const server = await start(0, '127.0.0.1', { aiDelay: 1, llmWait: 400, llmProxy: false });
+  const clients = [];
+  t.after(() => new Promise((r) => {
+    clients.forEach((c) => c.close());
+    server.closeAllConnections();
+    upstream.close();
+    server.close(r);
+  }));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const up = `http://127.0.0.1:${upstream.address().port}/v1/chat/completions`;
+
+  // 转发默认关闭
+  assert.equal((await fetch(base + '/api/info').then((r) => r.json())).llmProxy, false);
+  let r = await post(base, '/api/llm', { url: up, key: 'k', body: { model: 'm', messages: [] } });
+  assert.equal(r.status, 404);
+  assert.match(r.body.error.message, /LLM_PROXY/);
+
+  const tokA = 'tokenLLMAAAAAAAAAAAAA', tokB = 'tokenLLMBBBBBBBBBBBBB';
+  const code = (await post(base, '/api/rooms', { token: tokA, name: '甲', mode: 'duo' })).body.code;
+  const a = sseClient(base, code, tokA);
+  clients.push(a);
+  await a.ready;
+  await a.waitFor((c) => c.room && c.pid);
+  r = await post(base, `/api/rooms/${code}/op`, { token: tokA, op: { type: 'seat', seat: 0, kind: 'ai', level: 'llm' } });
+  assert.equal(r.status, 200);
+  r = await post(base, `/api/rooms/${code}/op`, { token: tokA, op: { type: 'seat', seat: 1, kind: 'ai', level: 'easy' } });
+  r = await post(base, `/api/rooms/${code}/op`, { token: tokA, op: { type: 'start' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  await a.waitFor((c) => c.room.status === 'playing');
+
+  // 房主替大模型电脑落子，附带理由；别人不行
+  const room = a.room;
+  const st = Online.gameState(room);
+  const m = Engine.legalMoves(st, st.current)[0];
+  r = await post(base, `/api/rooms/${code}/op`, { token: tokB, op: { type: 'act', at: 0, action: { type: 'place', ...m } } });
+  assert.equal(r.status, 409);
+  r = await post(base, `/api/rooms/${code}/op`, { token: tokA, op: { type: 'act', at: 0, action: { type: 'place', ...m }, note: '先占中心' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  await a.waitFor((c) => c.room.game.actions.length >= 1);
+  assert.equal(a.room.game.actions[0].note, '先占中心');
+
+  // 普通电脑回合由服务器马上走；下一个大模型回合房主不动，服务器等一会儿后代下
+  await a.waitFor((c) => c.room.game.actions.length >= 2);
+  const t0 = Date.now();
+  await a.waitFor((c) => c.room.game.actions.length >= 3, 4000);
+  assert.ok(Date.now() - t0 >= 300, '应该先等房主');
+  assert.equal(a.room.game.actions[2].note, undefined);
+
+  // 房主掉线后没人能替大模型电脑落子：服务器很快代下
+  a.close();
+  const watcher = sseClient(base, code, 'tokenLLMWATCHERWWWWWW');
+  clients.push(watcher);
+  await watcher.ready;
+  await watcher.waitFor((c) => c.room && c.room.game && c.room.game.actions.length >= 6, 4000);
+
+  // 开启转发后：只转发到 …/chat/completions，带上密钥
+  const server2 = await start(0, '127.0.0.1', { llmProxy: true });
+  t.after(() => new Promise((res) => { server2.closeAllConnections(); server2.close(res); }));
+  const base2 = `http://127.0.0.1:${server2.address().port}`;
+  assert.equal((await fetch(base2 + '/api/info').then((x) => x.json())).llmProxy, true);
+  r = await post(base2, '/api/llm', { url: up, key: 'sk-proxy', body: { model: 'mm', messages: [{ role: 'user', content: 'hi' }] } });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.choices[0].message.content, 'auth=Bearer sk-proxy model=mm path=/v1/chat/completions');
+  r = await post(base2, '/api/llm', { url: up.replace('/chat/completions', '/models'), body: {} });
+  assert.equal(r.status, 400);
+  r = await post(base2, '/api/llm', { url: 'file:///etc/passwd', body: {} });
+  assert.equal(r.status, 400);
+  r = await post(base2, '/api/llm', { url: 'http://127.0.0.1:1/v1/chat/completions', body: { model: 'x' } });
+  assert.equal(r.status, 502);
+});

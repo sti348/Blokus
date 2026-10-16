@@ -44,6 +44,7 @@
   function ServerNet(base) {
     this.kind = 'server';
     this.serverRunsAI = true;
+    this.llmProxy = false;
     this.base = base || '';
     this.es = null;
     this.code = null;
@@ -286,7 +287,10 @@
       return fetch('api/info', { cache: 'no-store' }).then(function (res) {
         return res.ok ? res.json() : null;
       }).then(function (info) {
-        return info && info.blokus ? { net: new ServerNet(''), reason: null } : { net: null, reason: 'static' };
+        if (!info || !info.blokus) return { net: null, reason: 'static' };
+        var net = new ServerNet('');
+        net.llmProxy = !!info.llmProxy;
+        return { net: net, reason: null };
       }, function () { return { net: null, reason: 'static' }; });
     }
     return Promise.resolve({ net: null, reason: 'file' });

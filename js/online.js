@@ -13,7 +13,7 @@
   var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   var CODE_RE = /^[A-HJ-NP-Z2-9]{5}$/;
   var KINDS = ['open', 'ai', 'off'];
-  var LEVELS = ['easy', 'normal', 'hard'];
+  var LEVELS = ['easy', 'normal', 'hard', 'llm'];
   var SPEEDS = ['fast', 'normal', 'slow'];
   var SYSTEM = '~system';
 
@@ -35,6 +35,15 @@
       .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, '')
       .trim()
       .slice(0, 12);
+  }
+
+  // 电脑（大模型）落子时附带的一句话
+  function cleanNote(s) {
+    return typeof s !== 'string' ? '' : s
+      .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 60);
   }
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -110,6 +119,8 @@
           if (a.type === 'resign') return { type: 'resign', player: a.player };
           var rec = { type: 'place', player: a.player, piece: a.piece, orient: a.orient, x: a.x, y: a.y };
           if (a.z !== undefined) rec.z = a.z;
+          var note = cleanNote(a.note);
+          if (note) rec.note = note;
           return rec;
         })
       };
@@ -286,7 +297,9 @@
         if (st.over) return fail('over', '对局已经结束');
         var who = r.game.config.players[st.current];
         if (who.type === 'ai') {
-          if (!ctx.system && !ctx.allowClientAI) return fail('not_your_turn', '还没轮到你');
+          // 大模型电脑由房主（或接替的在线玩家）的浏览器调用模型后代为落子
+          var runner = who.level === 'llm' && actor === aiRunner(r, ctx.online || null);
+          if (!ctx.system && !ctx.allowClientAI && !runner) return fail('not_your_turn', '还没轮到你');
         } else if (who.owner !== actor) {
           return fail('not_your_turn', '还没轮到你');
         }
@@ -299,7 +312,10 @@
         } else return fail('bad_action', '无效的棋步');
         var reason = Engine.applyAction(st, action);
         if (reason) return fail('illegal', '这步棋不合规则（' + reason + '）');
-        r.game.actions.push(st.actions[st.actions.length - 1]);
+        var record = st.actions[st.actions.length - 1];
+        var note = who.type === 'ai' && record.type === 'place' ? cleanNote(op.note) : '';
+        if (note) record.note = note;
+        r.game.actions.push(record);
         if (st.over) r.status = 'over';
         break;
       }
@@ -344,6 +360,7 @@
     makeCode: makeCode,
     normalizeCode: normalizeCode,
     cleanName: cleanName,
+    cleanNote: cleanNote,
     defaultSeats: defaultSeats,
     createRoom: createRoom,
     normalizeRoom: normalizeRoom,

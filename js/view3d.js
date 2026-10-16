@@ -341,12 +341,16 @@
     var lastSet = {};
     (ov.lastMove || []).forEach(function (i) { lastSet[i] = 1; });
 
-    // 透视：只显示到第 slice 层；X 光让所有格子半透明；挡住待放棋子的格子自动变淡
+    // 切层：只显示到第 slice 层。透视（默认关闭）：别人的格子半透明，挡住待放棋子的更淡；
+    // ov.own 里的玩家（自己）的格子始终不透明
     var slice = ov.slice != null ? Math.max(1, Math.min(H, ov.slice)) : H;
     var xray = !!ov.xray;
-    var fade = fadeSet(L, topo, board, [ov.ghost, ov.remote]);
+    var own = {};
+    (ov.own || []).forEach(function (p) { own[p] = 1; });
+    var fade = xray ? fadeSet(L, topo, board, [ov.ghost, ov.remote], own) : {};
+    function seeThrough(i) { return xray && !own[board[i]]; }
     function occ(i) {
-      return i >= 0 && board[i] >= 0 && !animSet[i] && !fade[i] && Math.floor(i / layer) < slice && !xray;
+      return i >= 0 && board[i] >= 0 && !animSet[i] && !seeThrough(i) && Math.floor(i / layer) < slice;
     }
 
     var items = [];
@@ -403,7 +407,7 @@
       if (fade[it.i]) {
         opts.alpha = 0.2;
         opts.noNub = true;
-      } else if (xray) {
+      } else if (seeThrough(it.i)) {
         opts.alpha = 0.34;
         opts.stroke = shade(color, 'edge');
         opts.strokeWidth = Math.max(1, L.k * 0.045);
@@ -463,8 +467,8 @@
     g.restore();
   }
 
-  // 屏幕上挡在待放棋子前面的格子
-  function fadeSet(L, topo, board, ghosts) {
+  // 屏幕上挡在待放棋子前面的格子（不含 own 里玩家的）
+  function fadeSet(L, topo, board, ghosts, own) {
     var out = {};
     var boxes = [];
     ghosts.forEach(function (gh) {
@@ -488,7 +492,7 @@
     if (!boxes.length) return out;
     var r = L.k * 0.9;
     for (var i = 0; i < board.length; i++) {
-      if (board[i] < 0) continue;
+      if (board[i] < 0 || own[board[i]]) continue;
       var c = coordOf(topo, i);
       var d = cellDepth(L, c);
       var cc = cellCenter(L, c);
