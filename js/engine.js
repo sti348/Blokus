@@ -19,6 +19,16 @@
     { color: 'green', label: '绿' }
   ];
 
+  // 宝石阵：最多 6 方，按棋盘一圈的顺序（左上起顺时针）
+  var SIX = [
+    { color: 'blue', label: '蓝' },
+    { color: 'yellow', label: '黄' },
+    { color: 'red', label: '红' },
+    { color: 'green', label: '绿' },
+    { color: 'violet', label: '紫' },
+    { color: 'white', label: '白' }
+  ];
+
   var MODES = {
     // 标准盘：四个角按顺时针分配，固定按 蓝 → 黄 → 红 → 绿 行棋
     classic: {
@@ -64,10 +74,27 @@
       sizeFor: { 2: 3, 3: 3, 4: 4 },
       heightFor: { 2: 5, 3: 6, 4: 4 },
       seats: FOUR
+    },
+    // 宝石阵（Gemblo）：六边形格的原版棋盘。6 方用整块棋盘，4 方、3 方只用棋盘中划出的区域
+    gemblo: {
+      name: '宝石阵',
+      shape: 'hex',
+      sizeFor: { 3: 3, 4: 4, 6: 6 },
+      counts: [3, 4, 6],
+      // 原版只比剩下的格子数，没有全部放完的奖励分
+      bonus: false,
+      seats: SIX
     }
   };
 
   function isMode(m) { return typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODES, m); }
+
+  // 这种棋盘允许几方参战（宝石阵只有 3、4、6 方）
+  function validCount(mode, n) {
+    var m = MODES[mode];
+    if (!m || n < 2 || n > m.seats.length) return false;
+    return !m.counts || m.counts.indexOf(n) >= 0;
+  }
 
   /* ================= 棋盘拓扑 ================= */
 
@@ -205,6 +232,99 @@
     return t;
   }
 
+  /*
+   * 宝石阵棋盘（按原版规则书的图）：平顶六边形格，轴坐标 (q, r)，格子中心纵坐标 v = r + q/2（以对边距离为单位）。
+   *   6 方：中心落在外接半径 22（以格子外接半径为单位）的大六边形内的 505 格：|v| ≤ 11 且 |v| ≤ 22 − 1.5|q|
+   *   4 方：中间的“方形”区域 |q| ≤ 9、|v| ≤ 7.5（295 格），四角是起点
+   *   3 方：外接半径 15 的六边形 |v| ≤ 7.5 且 |v| ≤ 15 − 1.5|q|，隔一个角一个起点
+   * 网格坐标 x = q + 14，y = r + 18。
+   */
+  var HEX_AREAS = {
+    6: {
+      inside: function (q, v) { return Math.abs(v) <= 11 && Math.abs(v) <= 22 - 1.5 * Math.abs(q); },
+      starts: [[-7, -10.5], [7, -10.5], [14, 0], [7, 10.5], [-7, 10.5], [-14, 0]]
+    },
+    4: {
+      inside: function (q, v) { return Math.abs(q) <= 9 && Math.abs(v) <= 7.5; },
+      starts: [[-9, -7.5], [9, -7.5], [9, 7.5], [-9, 7.5]]
+    },
+    3: {
+      inside: function (q, v) { return Math.abs(v) <= 7.5 && Math.abs(v) <= 15 - 1.5 * Math.abs(q); },
+      starts: [[-5, -7.5], [10, 0], [-5, 7.5]]
+    }
+  };
+
+  function hexTopology(area) {
+    var A = HEX_AREAS[area] || HEX_AREAS[6];
+    var Q0 = 14, R0 = 18, cols = 29, rows = 37;
+    var t = buildTopology('hex', cols, rows, Pieces.H / 3, 0.5, function (x, y) {
+      var q = x - Q0, r = y - R0;
+      if (!A.inside(q, r + q / 2)) return null;
+      var X = 3 * q, Y = 2 * r + q;
+      return [[X - 2, Y], [X - 1, Y - 1], [X + 1, Y - 1], [X + 2, Y], [X + 1, Y + 1], [X - 1, Y + 1]];
+    });
+    // 角相邻改为“尖对尖”：隔着一条边的两个格子；记下夹着那条边的两个格子（被同一块棋子占住时连接被挡）
+    var DIRS = Pieces.HEX_DIRS, APEX = Pieces.HEX_APEX;
+    function idx(q, r) {
+      var x = q + Q0, y = r + R0;
+      return x < 0 || y < 0 || x >= cols || y >= rows ? -1 : y * cols + x;
+    }
+    var via = new Array(t.n);
+    t.cells.forEach(function (i) {
+      var q = i % cols - Q0, r = Math.floor(i / cols) - R0;
+      var cs = [], vs = [];
+      APEX.forEach(function (a) {
+        var j = idx(q + a[0], r + a[1]);
+        if (j < 0 || !t.valid[j]) return;
+        var pair = [];
+        DIRS.forEach(function (d) {
+          var e = [a[0] - d[0], a[1] - d[1]];
+          if (DIRS.some(function (d2) { return d2[0] === e[0] && d2[1] === e[1]; })) pair.push(idx(q + d[0], r + d[1]));
+        });
+        cs.push(j);
+        vs.push(pair);
+      });
+      t.corners[i] = cs;
+      via[i] = vs;
+    });
+    t.cornerVia = via;
+    t.size = area;
+    t.area = area;
+    // 外框：所有顶点的凸包
+    var pts = [];
+    t.cells.forEach(function (i) { t.polys[i].forEach(function (v) { pts.push(v); }); });
+    t.outline = convexHull(pts);
+    t.orderStarts = A.starts.map(function (s) { return [s[0] + Q0, s[1] - s[0] / 2 + R0]; });
+    return t;
+  }
+
+  function convexHull(points) {
+    var ps = points.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    function cross(o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); }
+    var lower = [], upper = [], i;
+    for (i = 0; i < ps.length; i++) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], ps[i]) <= 0) lower.pop();
+      lower.push(ps[i]);
+    }
+    for (i = ps.length - 1; i >= 0; i--) {
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], ps[i]) <= 0) upper.pop();
+      upper.push(ps[i]);
+    }
+    upper.pop();
+    lower.pop();
+    return lower.concat(upper);
+  }
+
+  // 尖对尖相接时，夹着中间那条边的两个格子若属于同一块棋子（同色），连接被挡住（宝石阵规则）
+  function cornerOpen(topo, board, i, k) {
+    var via = topo.cornerVia;
+    if (!via) return true;
+    var pair = via[i][k];
+    if (pair.length < 2) return true;
+    var a = pair[0] >= 0 ? board[pair[0]] : -1, b = pair[1] >= 0 ? board[pair[1]] : -1;
+    return !(a >= 0 && a === b);
+  }
+
   // 立体棋盘：下标 = x + W·(z + D·y)，y 朝上；共面 = 面相邻，共棱或共顶点 = 角相邻
   function cubeTopology(n, height) {
     var W = n, D = n, H = height, total = W * D * H;
@@ -331,6 +451,7 @@
     var key = m.shape + ':' + size + (m.shape === 'cube' || m.shape === 'prism' ? ':' + h : '');
     if (!topoCache[key]) {
       topoCache[key] = m.shape === 'tri' ? triTopology(size)
+        : m.shape === 'hex' ? hexTopology(size)
         : m.shape === 'cube' ? cubeTopology(size, h)
         : m.shape === 'prism' ? prismTopology(size, h)
         : squareTopology(size);
@@ -358,10 +479,13 @@
 
   function setFor(mode) { return SETS[(isMode(mode) ? MODES[mode] : MODES.classic).shape]; }
 
+  // 按人数取棋盘大小；没有对应人数时取最接近的更大一档
   function sizeFor(mode, playerCount) {
     var m = MODES[mode];
-    if (m.sizeFor) return m.sizeFor[Math.max(2, Math.min(4, playerCount))];
-    return m.size;
+    if (!m.sizeFor) return m.size;
+    var keys = Object.keys(m.sizeFor).map(Number).sort(function (a, b) { return a - b; });
+    for (var i = 0; i < keys.length; i++) if (keys[i] >= playerCount) return m.sizeFor[keys[i]];
+    return m.sizeFor[keys[keys.length - 1]];
   }
 
   /**
@@ -376,13 +500,14 @@
     var cfg = {
       mode: mode,
       size: size,
-      players: entries.map(function (e) {
+      players: entries.map(function (e, order) {
         var seat = m.seats[e.seat];
         var p = {};
         for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k)) p[k] = e[k];
         p.color = seat.color;
         p.label = seat.label;
         p.starts = seat.start ? [seat.start.slice()]
+          : topo.orderStarts ? [topo.orderStarts[order % topo.orderStarts.length].slice()]
           : topo.seatStarts ? [topo.seatStarts[e.seat].slice()]
           : topo.starts.map(function (s) { return s.slice(); });
         return p;
@@ -423,6 +548,7 @@
         pl.remainingSquares = set.total;
         pl.placed = 0;
         pl.lastPiece = -1;
+        pl.noBonus = !!(MODES[config.mode] && MODES[config.mode].bonus === false);
         pl.done = false;
         pl.resigned = false;
         return pl;
@@ -554,7 +680,7 @@
       if (forb[i]) continue;
       var c = topo.corners[i];
       for (var k = 0; k < c.length; k++) {
-        if (board[c[k]] === p) {
+        if (board[c[k]] === p && cornerOpen(topo, board, i, k)) {
           mark[i] = 1;
           list.push(i);
           break;
@@ -671,9 +797,9 @@
     }
     for (i = 0; i < idx.length; i++) {
       var c = topo.corners[idx[i]];
-      for (k = 0; k < c.length; k++) if (board[c[k]] === p) return null;
+      for (k = 0; k < c.length; k++) if (board[c[k]] === p && cornerOpen(topo, board, idx[i], k)) return null;
     }
-    return 'corner';
+    return topo.cornerVia ? 'apex' : 'corner';
   }
 
   // 轮到下一位仍可行棋的玩家；无路可走者自动出局
@@ -747,10 +873,10 @@
     return state;
   }
 
-  // 官方计分：每个未放置的格子 -1；全部放完 +15，最后一块是单格再 +5
+  // 官方计分：每个未放置的格子 -1；全部放完 +15，最后一块是单格再 +5（宝石阵没有奖励分）
   function scoreOf(player) {
-    var s = -player.remainingSquares;
-    if (player.remainingSquares === 0) {
+    var s = 0 - player.remainingSquares;
+    if (player.remainingSquares === 0 && !player.noBonus) {
       s += 15;
       if (player.lastPiece === Pieces.MONOMINO) s += 5;
     }
@@ -768,7 +894,7 @@
         remainingSquares: pl.remainingSquares,
         piecesLeft: pl.remaining.filter(Boolean).length,
         allPlaced: pl.remainingSquares === 0,
-        monoLast: pl.remainingSquares === 0 && pl.lastPiece === Pieces.MONOMINO
+        monoLast: pl.remainingSquares === 0 && !pl.noBonus && pl.lastPiece === Pieces.MONOMINO
       };
     });
     rows.sort(function (a, b) { return b.score - a.score || b.placedSquares - a.placedSquares || a.index - b.index; });
@@ -786,6 +912,8 @@
     MODES: MODES,
     SETS: SETS,
     isMode: isMode,
+    validCount: validCount,
+    cornerOpen: cornerOpen,
     PIECES: SETS.square.pieces,
     TOTAL_SQUARES: SETS.square.total,
     topologyFor: topologyFor,

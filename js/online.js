@@ -294,6 +294,7 @@
           });
         }
         if (active.length < 2) return fail('too_few', '至少需要两方参战');
+        if (!Engine.validCount(r.mode, active.length)) return fail('bad_count', '宝石阵需要 3、4 或 6 方参战（两人对战时每人各执两色）');
         r.game = {
           id: (ctx.now || Date.now()).toString(36) + Math.floor(Math.random() * 1e6).toString(36),
           config: Engine.buildConfig(r.mode, active),

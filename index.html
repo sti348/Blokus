@@ -38,6 +38,7 @@
           <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span>标准 20×20</span></label>
           <label><input type="radio" name="mode" id="mode-duo" value="duo"><span>双人 14×14</span></label>
           <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span>三角块 · 六边形</span></label>
+          <label><input type="radio" name="mode" id="mode-gemblo" value="gemblo"><span>宝石阵</span></label>
           <label><input type="radio" name="mode" id="mode-cube" value="cube"><span>立体 · 三维</span></label>
           <label><input type="radio" name="mode" id="mode-prism" value="prism"><span>三棱柱</span></label>
         </div>
@@ -227,7 +228,7 @@
       <thead><tr><th>名次</th><th>玩家</th><th class="num">已放</th><th class="num">剩余</th><th class="num">得分</th></tr></thead>
       <tbody id="end-rows"></tbody>
     </table>
-    <p class="dialog-note">计分：每个未放置的格子 −1；全部棋子放完 +15，最后一块是单格再 +5。</p>
+    <p class="dialog-note" id="end-note">计分：每个未放置的格子 −1；全部棋子放完 +15，最后一块是单格再 +5。</p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" id="end-view">查看棋盘</button>
       <button type="button" class="btn" id="end-menu">返回菜单</button>
@@ -318,7 +319,15 @@
       <p><b>计分</b>：每个没放上去的格子扣 1 分；全部棋子放完加 15 分，如果最后一块是单格再加 5 分。分高者胜。</p>
       <p><b>标准 20×20</b>：21 块方块棋子（共 89 格），各自从棋盘的一个角出发。<b>双人 14×14</b>：两人从棋盘内侧的两个起点出发。</p>
       <p><b>三角块</b>：六边形棋盘由三角形格子组成，每人 22 块三角棋子（1–6 格，共 110 格），可旋转 6 个方向。棋盘上有 6 个公共起点，第一块盖住任意一个空着的起点即可；4 人用边长 9 的棋盘，3 人用 8，2 人用 7。</p>
-      <p><b>立体（原创三维玩法）</b>：在 7×7 的地面上往上搭，最多 5 层（3 人 6×6，2 人 5×5）。每人 12 块立方体棋子（1–4 个方块，共 41 块，镜像的两块算不同的棋子）。</p>
+      <p><b>宝石阵（Gemblo）</b>：按原版规则。棋盘由六边形格子组成，每人 18 块棋子（单格 1、双格 1、三格 3、四格 5、五格 8，共 72 格）。6 方用整块棋盘、起点在 6 个角；4 方只用中间的方形区域、起点在它的 4 个角；3 方用中间较小的六边形区域、起点在它相间的 3 个角。</p>
+      <ol>
+        <li>第一块必须盖住自己的起点。</li>
+        <li>同色的棋子不能接触；之后每块都要和自己的某块棋子<b>尖对尖</b>，相隔正好一条边的距离。</li>
+        <li>隔开的那条边如果两边是别人的<b>同一块</b>棋子，就算被挡住；落在别人两块棋子的交界处则没关系。</li>
+        <li>所有人都放不下时结束，只数没放上棋盘的格子，剩得最少的获胜（没有奖励分）。</li>
+        <li>两人对战时每人各执两色（4 方区域），在座位里把两个颜色都设为自己。</li>
+      </ol>
+            <p><b>立体（原创三维玩法）</b>：在 7×7 的地面上往上搭，最多 5 层（3 人 6×6，2 人 5×5）。每人 12 块立方体棋子（1–4 个方块，共 41 块，镜像的两块算不同的棋子）。</p>
       <ol>
         <li>选好棋子和朝向后，指向地面上的某一列，棋子会从上方<b>竖直落下</b>，停在地面或任何人的棋子上。不能悬空，也不能超过限高。</li>
         <li>第一块必须盖住自己在地面上的起始角。</li>

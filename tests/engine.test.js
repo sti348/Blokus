@@ -156,7 +156,7 @@ test('同色只能角接、不能边接；异色可以边接', () => {
 });
 
 test('走法生成与暴力枚举完全一致（无重复、无遗漏）', () => {
-  for (const [mode, count, seed, rounds] of [['classic', 4, 1, 6], ['classic', 3, 2, 5], ['duo', 2, 3, 5], ['trigon', 4, 4, 6], ['trigon', 2, 5, 4], ['cube', 4, 6, 9], ['cube', 2, 7, 6], ['prism', 4, 8, 9], ['prism', 3, 9, 6]]) {
+  for (const [mode, count, seed, rounds] of [['classic', 4, 1, 6], ['classic', 3, 2, 5], ['duo', 2, 3, 5], ['trigon', 4, 4, 6], ['trigon', 2, 5, 4], ['cube', 4, 6, 9], ['cube', 2, 7, 6], ['prism', 4, 8, 9], ['prism', 3, 9, 6], ['gemblo', 3, 10, 5], ['gemblo', 6, 20, 4]]) {
     const rng = seeded(seed);
     const state = Engine.createGame(config(mode, count));
     for (let round = 0; round < rounds && !state.over; round++) {
@@ -170,7 +170,7 @@ test('走法生成与暴力枚举完全一致（无重复、无遗漏）', () =>
 });
 
 test('随机对局能正常结束，重放结果一致', () => {
-  for (const [mode, count, seed] of [['classic', 4, 11], ['classic', 2, 12], ['duo', 2, 13], ['trigon', 4, 14], ['trigon', 3, 15], ['cube', 4, 16], ['cube', 2, 17], ['prism', 4, 18], ['prism', 2, 19]]) {
+  for (const [mode, count, seed] of [['classic', 4, 11], ['classic', 2, 12], ['duo', 2, 13], ['trigon', 4, 14], ['trigon', 3, 15], ['cube', 4, 16], ['cube', 2, 17], ['prism', 4, 18], ['prism', 2, 19], ['gemblo', 6, 21], ['gemblo', 4, 22], ['gemblo', 3, 23]]) {
     const cfg = config(mode, count);
     const state = Engine.createGame(cfg);
     playRandomly(state, seeded(seed), 2000);
@@ -313,7 +313,7 @@ test('排名并列时名次相同', () => {
 });
 
 test('三档电脑在两种棋盘上都只走合法棋步', () => {
-  for (const mode of ['classic', 'trigon', 'cube', 'prism']) {
+  for (const mode of ['classic', 'trigon', 'cube', 'prism', 'gemblo']) {
     for (const level of ['easy', 'normal', 'hard']) {
       const state = Engine.createGame(config(mode));
       const rng = seeded(level.length + mode.length);
@@ -325,4 +325,118 @@ test('三档电脑在两种棋盘上都只走合法棋步', () => {
       }
     }
   }
+});
+
+/* ---------------- 宝石阵 ---------------- */
+
+function hexCanon(cells) {
+  const tf = (c, rot, flip) => Pieces.GEOMETRY.hex.transformCell(c, rot, flip);
+  let best = null;
+  for (let f = 0; f < 2; f++) for (let r = 0; r < 6; r++) {
+    const k = Pieces.GEOMETRY.hex.normalize(cells.map((c) => tf(c, r, f))).map((c) => c.join(',')).join(';');
+    if (best === null || k < best) best = k;
+  }
+  return best;
+}
+
+test('宝石阵：每人 18 块共 72 格（单格 1、双格 1、三格 3、四格 5、五格 8），形状互不相同', () => {
+  const set = Pieces.SETS.hex;
+  assert.equal(set.count, 18);
+  assert.equal(set.total, 72);
+  const bySize = {};
+  set.pieces.forEach((p) => { bySize[p.size] = (bySize[p.size] || 0) + 1; });
+  assert.deepEqual(bySize, { 1: 1, 2: 1, 3: 3, 4: 5, 5: 8 });
+  const keys = set.pieces.map((p) => hexCanon(p.orients[0].cells));
+  assert.equal(new Set(keys).size, 18);
+  // 原版规则书示例和盒面上出现的四格：直四、拱形、波浪、手枪、三叉；没有菱形
+  const has = (cells) => keys.includes(hexCanon(cells));
+  assert.ok(has([[0, 0], [0, 1], [0, 2], [0, 3]]), '直四');
+  assert.ok(has([[0, 0], [1, 0], [1, 1], [0, 2]]), '拱形');
+  assert.ok(has([[0, 0], [1, 0], [1, 1], [2, 1]]), '波浪');
+  assert.ok(has([[0, 0], [0, 1], [1, 1], [0, 2]]), '手枪');
+  assert.ok(has([[1, 0], [1, 1], [2, 1], [0, 2]]), '三叉');
+  assert.ok(!has([[0, 0], [1, 0], [0, 1], [1, 1]]), '菱形');
+  // 旋转 6 次、翻转 2 次都回到原样
+  set.pieces.forEach((p, i) => {
+    for (let f = 0; f < 2; f++) {
+      assert.equal(set.orientFor(i, 6, f), set.orientFor(i, 0, f));
+    }
+  });
+});
+
+test('宝石阵：原版棋盘（6 方 505 格、4 方方形 295 格、3 方 241 格），起点在角上', () => {
+  const t6 = Engine.topologyFor('gemblo', 6), t4 = Engine.topologyFor('gemblo', 4), t3 = Engine.topologyFor('gemblo', 3);
+  assert.equal(t6.cells.length, 505);
+  assert.equal(t4.cells.length, 295);
+  assert.equal(t3.cells.length, 241);
+  // 整块棋盘绕中心旋转 60° 不变
+  const Q0 = 14, R0 = 18;
+  const valid = (t, q, r) => Engine.inBounds(t, [q + Q0, r + R0]);
+  t6.cells.forEach((i) => {
+    const q = (i % t6.cols) - Q0, r = Math.floor(i / t6.cols) - R0;
+    assert.ok(valid(t6, -r, q + r), 'rotational symmetry');
+  });
+  // 小区域都在整块棋盘里
+  t4.cells.concat(t3.cells).forEach((i) => assert.ok(t6.valid[i]));
+  // 每格 6 个贴边邻格、6 个尖对尖邻格（内部）
+  const mid = 18 * t6.cols + 14;
+  assert.equal(t6.edges[mid].length, 6);
+  assert.equal(t6.corners[mid].length, 6);
+  // 起点按顺序分配到角上
+  const starts = (n) => config('gemblo', n).players.map((p) => p.starts[0].map((v, k) => v - (k ? R0 : Q0)));
+  assert.deepEqual(starts(6), [[-7, -7], [7, -14], [14, -7], [7, 7], [-7, 14], [-14, 7]]);
+  assert.deepEqual(starts(4), [[-9, -3], [9, -12], [9, 3], [-9, 12]]);
+  assert.deepEqual(starts(3), [[-5, -5], [10, -5], [-5, 10]]);
+  assert.equal(Engine.validCount('gemblo', 2), false);
+  assert.equal(Engine.validCount('gemblo', 5), false);
+  assert.ok([3, 4, 6].every((n) => Engine.validCount('gemblo', n)));
+});
+
+test('宝石阵：尖对尖相接，中间那条边被别人的同一块棋子挡住时不能接（规则书图 6、9、10）', () => {
+  const state = Engine.createGame(config('gemblo', 3));
+  const t = state.topo, Q0 = 14, R0 = 18;
+  const at = (q, r) => (r + R0) * t.cols + q + Q0;
+  const RED = 0, YELLOW = 1, GREEN = 2;
+  // 红色直四竖放（A），顶格 (0,0)
+  for (let r = 0; r < 4; r++) state.board[at(0, r)] = RED;
+  state.players[RED].placed = 1;
+  const mono = state.set.pieces.findIndex((p) => p.size === 1);
+  const anchorsOf = () => {
+    const forb = Engine.forbiddenMask(state.board, t, RED);
+    return Engine.anchorMask(state.board, t, RED, state.players[RED], forb).mark;
+  };
+  // 图 6：位置 1–7 都可以
+  const spots = { 1: [-2, 1], 2: [-1, -1], 3: [1, -2], 4: [2, -1], 5: [2, 0], 6: [2, 1], 7: [2, 2] };
+  let mark = anchorsOf();
+  Object.entries(spots).forEach(([n, [q, r]]) => assert.equal(mark[at(q, r)], 1, '位置 ' + n));
+  assert.equal(Array.from(mark).filter(Boolean).length, 12);
+  assert.equal(Engine.checkPlacement(state, RED, mono, 0, 2 + Q0, -1 + R0), null);
+  // 和自己贴边不行
+  assert.equal(Engine.checkPlacement(state, RED, mono, 0, 1 + Q0, 0 + R0), 'edge');
+  // 图 9：黄色同一块棋子占住夹着那条边的两格 -> 位置 4 被挡住
+  state.board[at(1, -1)] = YELLOW;
+  state.board[at(1, 0)] = YELLOW;
+  state.board[at(2, -2)] = YELLOW;
+  mark = anchorsOf();
+  assert.equal(mark[at(2, -1)], 0);
+  assert.equal(Engine.checkPlacement(state, RED, mono, 0, 2 + Q0, -1 + R0), 'apex');
+  // 图 10：那条边落在黄、绿两块棋子的交界上 -> 可以
+  state.board[at(1, 0)] = GREEN;
+  mark = anchorsOf();
+  assert.equal(mark[at(2, -1)], 1);
+  assert.equal(Engine.checkPlacement(state, RED, mono, 0, 2 + Q0, -1 + R0), null);
+});
+
+test('宝石阵：只数剩下的格子，没有奖励分', () => {
+  const state = Engine.createGame(config('gemblo', 3));
+  const pl = state.players[0];
+  pl.remainingSquares = 0;
+  pl.lastPiece = 0;
+  assert.equal(Engine.scoreOf(pl), 0);
+  pl.remainingSquares = 7;
+  assert.equal(Engine.scoreOf(pl), -7);
+  const classic = Engine.createGame(config('classic', 4)).players[0];
+  classic.remainingSquares = 0;
+  classic.lastPiece = 0;
+  assert.equal(Engine.scoreOf(classic), 20);
 });

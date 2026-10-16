@@ -24,7 +24,7 @@
   // 候选：与最佳一步的推演结果差不超过 MARGIN，最多 MAX_CANDIDATES 个（自对弈里总选最差的一步也接近大师）
   var MARGIN = 0.6;
   var MAX_CANDIDATES = 4;
-  var LETTER = { blue: 'B', yellow: 'Y', red: 'R', green: 'G', violet: 'V', orange: 'O' };
+  var LETTER = { blue: 'B', yellow: 'Y', red: 'R', green: 'G', violet: 'V', orange: 'O', white: 'W' };
 
   function defaults() {
     return {
@@ -258,6 +258,10 @@
     if (topo.dims === 3) {
       return '三维棋盘（' + (topo.kind === 'prism' ? '地面由三角形组成，每格是一根三棱柱' : '每格是一个立方体') + '，最高 ' + topo.height + ' 层）。' +
         '棋子从上方落下，停在地面或任何人的棋子上。自己的棋子不能面贴面，新棋子必须和自己的棋子共享棱或顶点；可以叠在别人的棋子上。';
+    }
+    if (topo.kind === 'hex') {
+      return '宝石阵：六边形格棋盘（平顶六边形，坐标 (x,y) 中同一列 x 上下相邻）。自己的棋子之间不能接触；每块新棋子必须和自己的某块棋子“尖对尖”、隔开一条边的距离，' +
+        '而且夹着那条边的两格不能是别人的同一块棋子；和别人的棋子贴边没关系。';
     }
     return (topo.kind === 'tri' ? '六边形三角格棋盘' : '方格棋盘') + '。每块新棋子必须和自己的棋子角对角相接，不能和自己的棋子边贴边；和别人的棋子贴边没关系。';
   }

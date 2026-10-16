@@ -142,6 +142,70 @@
     }
   };
 
+  /* ---------------- 六边形格（宝石阵） ---------------- */
+
+  // 轴坐标 (q, r)：平顶六边形（与原版棋盘一致），q 为列（向右），r 沿列向下；对边距离为 1
+  var HEX_DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+  // “尖对尖”的 6 个方向：隔着两个格子的公共边（距离为一条边长）
+  var HEX_APEX = [[1, 1], [2, -1], [1, -2], [-1, -1], [-2, 1], [-1, 2]];
+  var HEX_R = 2 * H / 3; // 外接圆半径
+
+  function hexCenter(q, r) { return [q * H, r + q / 2]; }
+
+  var HEX = {
+    kind: 'hex',
+    rotations: 6,
+    // 先翻转，再旋转 rot × 60°
+    transformCell: function (c, rot, flip) {
+      var q = c[0], r = c[1];
+      if (flip) r = -q - r;
+      for (var k = 0; k < rot; k++) {
+        var nq = -r;
+        r = q + r;
+        q = nq;
+      }
+      return [q, r];
+    },
+    normalize: function (cells) {
+      var b = bbox(cells);
+      return sortCells(cells.map(function (c) { return [c[0] - b.minX, c[1] - b.minY]; }));
+    },
+    cellPoly: function (x, y) {
+      var c = hexCenter(x, y);
+      return [[-1, 0], [-0.5, -1], [0.5, -1], [1, 0], [0.5, 1], [-0.5, 1]].map(function (v) {
+        return [c[0] + v[0] * HEX_R, c[1] + v[1] * 0.5];
+      });
+    },
+    centroid: function (x, y) { return hexCenter(x, y); }
+  };
+
+  /*
+   * 宝石阵（Gemblo）每人 18 块：单格 1、双格 1、三格 3、四格 5、五格 8，共 72 格（原版数量）。
+   * 三格只有 3 种，全用；四格按原版规则书示例（直四、拱形、波浪）和盒面图（手枪、三叉）确定。
+   * 五格原版从 22 种里选了 8 种，现有资料看不出是哪 8 种，下面这 8 种是按同样的风格挑的，
+   * 有原版图片时改这张表即可。
+   */
+  var GEMBLO_RAW = [
+    { id: 'G1', name: '单格', cells: [[0, 0]] },
+    { id: 'G2', name: '双格', cells: [[0, 0], [0, 1]] },
+    { id: 'G3a', name: '直三', cells: [[0, 0], [0, 1], [0, 2]] },
+    { id: 'G3b', name: '弯三', cells: [[0, 0], [0, 1], [1, 1]] },
+    { id: 'G3c', name: '三角', cells: [[0, 0], [1, 0], [0, 1]] },
+    { id: 'G4a', name: '直四', cells: [[0, 0], [0, 1], [0, 2], [0, 3]] },
+    { id: 'G4b', name: '拱形', cells: [[0, 0], [1, 0], [1, 1], [0, 2]] },
+    { id: 'G4c', name: '波浪', cells: [[0, 0], [0, 1], [1, 1], [1, 2]] },
+    { id: 'G4d', name: '手枪', cells: [[0, 0], [0, 1], [1, 1], [0, 2]] },
+    { id: 'G4e', name: '三叉', cells: [[1, 0], [1, 1], [2, 1], [0, 2]] },
+    { id: 'G5a', name: '直五', cells: [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]] },
+    { id: 'G5b', name: '长钩', cells: [[0, 0], [0, 1], [0, 2], [0, 3], [1, 3]] },
+    { id: 'G5c', name: '大拐', cells: [[0, 0], [0, 1], [0, 2], [1, 2], [2, 2]] },
+    { id: 'G5d', name: '马蹄', cells: [[0, 0], [0, 1], [2, 1], [0, 2], [1, 2]] },
+    { id: 'G5e', name: '长浪', cells: [[0, 0], [0, 1], [1, 1], [1, 2], [2, 2]] },
+    { id: 'G5f', name: 'S 形', cells: [[0, 0], [0, 1], [1, 1], [2, 1], [2, 2]] },
+    { id: 'G5g', name: '长枪', cells: [[0, 0], [0, 1], [1, 1], [0, 2], [0, 3]] },
+    { id: 'G5h', name: '长叉', cells: [[1, 0], [1, 1], [1, 2], [2, 2], [0, 3]] }
+  ];
+
   // 枚举 1–6 格的全部自由多三角形（允许旋转、翻转）
   function canonical(geom, cells) {
     var best = null;
@@ -658,13 +722,16 @@
     square: buildSet(SQUARE, SQUARE_RAW),
     tri: buildSet(TRI, triRaws),
     cube: buildCubeSet(),
-    prism: buildPrismSet()
+    prism: buildPrismSet(),
+    hex: buildSet(HEX, GEMBLO_RAW)
   };
   SETS.cube.dims = 3;
 
   return {
     SETS: SETS,
-    GEOMETRY: { square: SQUARE, tri: TRI },
+    GEOMETRY: { square: SQUARE, tri: TRI, hex: HEX },
+    HEX_DIRS: HEX_DIRS,
+    HEX_APEX: HEX_APEX,
     MONOMINO: 0,
     H: H,
     triUp: triUp,

@@ -25,7 +25,7 @@
     var e = topo.edges[i], k;
     for (k = 0; k < e.length; k++) if (board[e[k]] === p) return false;
     var c = topo.corners[i];
-    for (k = 0; k < c.length; k++) if (board[c[k]] === p) return true;
+    for (k = 0; k < c.length; k++) if (board[c[k]] === p && Engine.cornerOpen(topo, board, i, k)) return true;
     return false;
   }
 

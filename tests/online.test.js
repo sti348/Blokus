@@ -417,3 +417,15 @@ test('房间：大师难度与大模型座位的模型配置名', () => {
   lobby = ok(Online.applyOp(lobby, { type: 'seat', seat: 3, model: '' }, HOST));
   assert.equal(lobby.seats[3].model, undefined);
 });
+
+test('房间：宝石阵只能 3、4 或 6 方开局', () => {
+  let room = Online.createRoom({ code: 'ABCDE', host: HOST, name: '房主', mode: 'gemblo', now: 1 });
+  assert.equal(room.seats.length, 6);
+  room = ok(Online.applyOp(room, { type: 'claim', seat: 1, name: '乙' }, GUEST));
+  for (const i of [2, 3, 4, 5]) room = ok(Online.applyOp(room, { type: 'seat', seat: i, kind: 'off' }, HOST));
+  assert.equal(Online.applyOp(room, { type: 'start' }, HOST).code, 'bad_count');
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 2, kind: 'ai', level: 'hard' }, HOST));
+  room = ok(Online.applyOp(room, { type: 'start' }, HOST));
+  assert.equal(room.game.config.players.length, 3);
+  assert.equal(Online.gameState(room).topo.cells.length, 241);
+});

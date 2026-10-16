@@ -12,12 +12,13 @@
   var Net = BlokusNet;
   var EMPTY = Engine.EMPTY;
 
-  var MODE_LIST = ['classic', 'duo', 'trigon', 'cube', 'prism'];
-  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块', cube: '立体', prism: '三棱柱' };
+  var MODE_LIST = ['classic', 'duo', 'trigon', 'gemblo', 'cube', 'prism'];
+  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块', gemblo: '宝石阵', cube: '立体', prism: '三棱柱' };
   var MODE_NOTE = {
     classic: '21 块方块棋子，四人各从棋盘一角出发。',
     duo: '两人对战，从棋盘内侧的两个起点出发。',
     trigon: '22 块三角棋子，6 个公共起点；4 人用边长 9 的六边形棋盘，人少时棋盘相应缩小。',
+    gemblo: '原版 Gemblo：六边形格棋盘，每人 18 块（1–5 格）。同色棋子不能接触，新棋子要和自己的棋子尖对尖、隔开一条边。3、4、6 方参战，人少时只用棋盘中间的区域。',
     cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。',
     prism: '三角格版的立体玩法：六边形地面由三角形组成，每格是一个三棱柱，棋子落下堆叠。自己的棋子不能面贴面，必须棱或角相接。每人 19 块三棱柱棋子（1–4 格）。'
   };
@@ -30,6 +31,7 @@
     edge: '不能和自己的棋子边贴边',
     start: '第一块必须盖住起点',
     corner: '必须和自己的棋子角对角相接',
+    apex: '必须和自己的棋子尖对尖、隔开一条边（中间那条边不能被别人的同一块棋子挡住）',
     over: '对局已经结束',
     ceiling: '叠得太高了：最多 5 层',
     float: '棋子会一直落到底，不能悬空'
@@ -86,7 +88,8 @@
         red: get('--p-red'),
         green: get('--p-green'),
         violet: get('--p-violet'),
-        orange: get('--p-orange')
+        orange: get('--p-orange'),
+        white: get('--p-white')
       }
     };
     themeVersion++;
@@ -263,6 +266,17 @@
     if (topo.kind === 'square') {
       return { x: clamp(Math.floor(vx), 0, topo.cols - 1), y: clamp(Math.floor(vy), 0, topo.rows - 1) };
     }
+    if (topo.kind === 'hex') {
+      // 六边形格：找中心最近的格子
+      var wx = vx * topo.unitX, wy = vy * topo.unitY, best = -1, bd = Infinity;
+      for (var c = 0; c < topo.cells.length; c++) {
+        var ci = topo.cells[c];
+        var dx = topo.centroids[ci * 2] - wx, dy = topo.centroids[ci * 2 + 1] - wy;
+        var dd = dx * dx + dy * dy;
+        if (dd < bd) { bd = dd; best = ci; }
+      }
+      return best >= 0 && bd < 0.36 ? { x: best % topo.cols, y: Math.floor(best / topo.cols) } : null;
+    }
     var y = Math.floor(vy);
     if (y < 0 || y >= topo.rows) return null;
     var fx = Math.floor(vx);
@@ -281,7 +295,7 @@
       this.tiles = {};
       this.tilesKey = key;
     }
-    var shape = topo.kind === 'square' ? 's' : (((i % topo.cols) + Math.floor(i / topo.cols)) & 1) ? 'd' : 'u';
+    var shape = topo.kind !== 'tri' ? topo.kind.charAt(0) : (((i % topo.cols) + Math.floor(i / topo.cols)) & 1) ? 'd' : 'u';
     var tk = color + shape;
     if (!this.tiles[tk]) {
       var bx = L.box[i * 4], by = L.box[i * 4 + 1], bw = L.box[i * 4 + 2], bh = L.box[i * 4 + 3];
@@ -547,7 +561,7 @@
     mode: 'classic',
     tab: 'local',
     nick: '',
-    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4), cube: defaultSeats(4), prism: defaultSeats(4) },
+    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4), gemblo: defaultSeats(6), cube: defaultSeats(4), prism: defaultSeats(4) },
     hints: true,
     sound: true,
     speed: 'normal'
@@ -593,6 +607,14 @@
     trigon: FOUR_PRESETS,
     cube: FOUR_PRESETS,
     prism: FOUR_PRESETS,
+    gemblo: [
+      { label: '1 人 + 5 电脑', types: ['human', 'ai', 'ai', 'ai', 'ai', 'ai'] },
+      { label: '1 人 + 3 电脑', types: ['human', 'ai', 'ai', 'ai', 'off', 'off'] },
+      { label: '1 人 + 2 电脑', types: ['human', 'ai', 'ai', 'off', 'off', 'off'] },
+      { label: '3 人 + 3 电脑', types: ['human', 'ai', 'human', 'ai', 'human', 'ai'] },
+      { label: '6 人同屏', types: ['human', 'human', 'human', 'human', 'human', 'human'] },
+      { label: '电脑观战', types: ['ai', 'ai', 'ai', 'ai', 'ai', 'ai'] }
+    ],
     duo: [
       { label: '人机对战', types: ['human', 'ai'] },
       { label: '双人同屏', types: ['human', 'human'] },
@@ -723,7 +745,7 @@
       if (s.type === 'ai' && s.level === 'llm') entry.model = llmProfile(s.model).name;
       entries.push(entry);
     });
-    if (entries.length < 2) return null;
+    if (entries.length < 2 || !Engine.validCount(mode, entries.length)) return null;
     return Engine.buildConfig(mode, entries);
   }
 
@@ -1093,7 +1115,7 @@
   var demo = { view: null, state: null, timer: 0, anim: null, round: 0 };
 
   function demoNew() {
-    var mode = ['classic', 'trigon', 'cube', 'prism'][demo.round++ % 4];
+    var mode = ['classic', 'trigon', 'gemblo', 'cube', 'prism'][demo.round++ % 5];
     demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.map(function (s, i) { return { seat: i }; })));
     demo.anim = null;
     $('demo-label').textContent = '电脑演示局 · ' + MODE_LABEL[mode];
@@ -2268,8 +2290,11 @@
         : winners[0].player.name + ' 获胜';
     }
     $('end-title').textContent = title;
+    $('end-note').textContent = st.players[0].noBonus
+      ? '计分：只数没放上棋盘的格子，剩得最少的获胜（宝石阵没有奖励分）。'
+      : '计分：每个未放置的格子 −1；全部棋子放完 +15，最后一块是单格再 +5。';
     $('end-rows').innerHTML = rows.map(function (r) {
-      var bonus = r.monoLast ? '全部放完 +15，单格收尾 +5' : r.allPlaced ? '全部放完 +15' : r.player.resigned ? '中途停手' : '';
+      var bonus = r.monoLast ? '全部放完 +15，单格收尾 +5' : r.allPlaced ? (r.player.noBonus ? '全部放完' : '全部放完 +15') : r.player.resigned ? '中途停手' : '';
       return '<tr>' +
         '<td><span class="rank' + (r.rank === 1 ? ' first' : '') + '">' + r.rank + '</span></td>' +
         '<td><span class="who" style="--c:' + colorVar(r.player) + '"><i></i><span>' + escapeHtml(r.player.name) +
@@ -2744,6 +2769,8 @@
     } else {
       var tri = topo.kind === 'tri';
       var d = { left: [tri ? -2 : -1, 0], right: [tri ? 2 : 1, 0], up: [0, -1], down: [0, 1] }[dir];
+      // 平顶六边形：左右换列时上下交替半格，保持水平移动
+      if (topo.kind === 'hex' && d[0]) d = [d[0], d[0] < 0 ? (game.ghost.x & 1 ? 1 : 0) : (game.ghost.x & 1 ? 0 : -1)];
       var nx = game.ghost.x + d[0], ny = game.ghost.y + d[1];
       if (tri && (nx < 0 || ny < 0 || nx >= topo.cols || ny >= topo.rows || !topo.valid[ny * topo.cols + nx])) return;
       game.ghost = { x: nx, y: ny };
@@ -2804,7 +2831,9 @@
       var cfg = buildLocalConfig();
       if (!cfg) {
         var err = $('setup-error');
-        err.textContent = '至少需要两方参战，请把一个空位改成玩家或电脑。';
+        err.textContent = prefs.mode === 'gemblo'
+          ? '宝石阵需要 3、4 或 6 方参战（两人对战时每人各执两色）。'
+          : '至少需要两方参战，请把一个空位改成玩家或电脑。';
         err.hidden = false;
         return;
       }
