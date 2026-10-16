@@ -59,6 +59,7 @@
         <div class="field options">
           <label class="check"><input type="checkbox" id="opt-hints" checked><span>显示可落子的角点</span></label>
           <label class="check"><input type="checkbox" id="opt-sound" checked><span>音效</span></label>
+          <label class="check"><input type="checkbox" id="opt-dark"><span>深色主题</span></label>
           <label class="inline-select">电脑速度
             <select id="opt-speed">
               <option value="fast">快</option>
@@ -74,6 +75,7 @@
         <div class="setup-actions">
           <button type="submit" class="btn primary big" id="start-btn">开始对局</button>
           <button type="button" class="btn" id="resume-btn" hidden>继续上局</button>
+          <button type="button" class="btn ghost" id="records-open">对局记录</button>
           <button type="button" class="btn ghost rules-open">玩法规则</button>
         </div>
       </form>
@@ -169,6 +171,8 @@
         <button type="button" class="btn" id="hint-btn" title="提示（H）">提示</button>
         <button type="button" class="btn" id="undo-btn" title="悔棋（Ctrl+Z）">悔棋</button>
         <button type="button" class="btn" id="pause-btn" hidden>暂停</button>
+        <button type="button" class="btn" id="result-btn" hidden>结果</button>
+        <button type="button" class="btn icon" id="theme-btn" aria-pressed="false" title="深色主题" aria-label="深色主题"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></svg></button>
         <button type="button" class="btn icon" id="sound-btn" aria-pressed="true" title="音效" aria-label="音效"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6"/><path class="wave" d="M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
       </div>
     </header>
@@ -217,6 +221,29 @@
         <div class="tray" id="tray" role="listbox" aria-label="剩余棋子"></div>
         <p class="keys" id="keys-help">点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消</p>
         <button type="button" class="btn ghost danger-text" id="resign-btn">停手，不再落子</button>
+        <div class="replay-panel" id="replay-panel" hidden>
+          <div class="replay-controls" role="group" aria-label="回放控制">
+            <button type="button" class="btn icon" id="rp-first" title="回到开局（Home）" aria-label="回到开局"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M18 6l-8 6 8 6z"/></svg></button>
+            <button type="button" class="btn icon" id="rp-prev" title="上一步（←）" aria-label="上一步"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+            <button type="button" class="btn primary rp-play" id="rp-play">播放</button>
+            <button type="button" class="btn icon" id="rp-next" title="下一步（→）" aria-label="下一步"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+            <button type="button" class="btn icon" id="rp-last" title="跳到最后（End）" aria-label="跳到最后"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M6 6l8 6-8 6z"/></svg></button>
+          </div>
+          <input type="range" id="rp-range" min="0" max="0" value="0" step="1" aria-label="跳到第几步">
+          <div class="replay-row">
+            <label class="inline-select">速度
+              <select id="rp-speed">
+                <option value="0.5">慢</option>
+                <option value="1" selected>中</option>
+                <option value="2">快</option>
+                <option value="4">很快</option>
+              </select>
+            </label>
+            <button type="button" class="btn small" id="rp-export">导出文件</button>
+          </div>
+          <ol class="replay-moves" id="rp-moves" aria-label="下棋流程"></ol>
+          <p class="keys">← → 逐步 · 空格播放 / 暂停 · 点列表跳到那一步</p>
+        </div>
       </aside>
     </div>
   </section>
@@ -225,14 +252,32 @@
   <dialog id="end-dialog" class="dialog">
     <h2 class="dialog-title" id="end-title">对局结束</h2>
     <table class="results">
-      <thead><tr><th>名次</th><th>玩家</th><th class="num">已放</th><th class="num">剩余</th><th class="num">得分</th></tr></thead>
+      <thead><tr><th>名次</th><th>玩家</th><th class="num">剩余</th></tr></thead>
       <tbody id="end-rows"></tbody>
     </table>
-    <p class="dialog-note" id="end-note">计分：每个未放置的格子 −1；全部棋子放完 +15，最后一块是单格再 +5。</p>
+    <p class="dialog-note" id="end-note"></p>
+    <div class="record-bar">
+      <span class="record-label">对局记录</span>
+      <button type="button" class="btn small" id="end-save">保存到本机</button>
+      <button type="button" class="btn small" id="end-export">导出文件</button>
+      <span class="record-msg" id="end-record-note" role="status"></span>
+    </div>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" id="end-view">查看棋盘</button>
       <button type="button" class="btn" id="end-menu">返回菜单</button>
       <button type="button" class="btn primary" id="end-again">再来一局</button>
+    </div>
+  </dialog>
+
+  <dialog id="records-dialog" class="dialog wide">
+    <h2 class="dialog-title">对局记录</h2>
+    <p class="dialog-note">保存在这台设备的浏览器里，最多 60 局，超出时自动删掉最早的。导出的文件包含完整的下棋流程，可以在任何设备上导入回放。</p>
+    <p class="record-msg block" id="records-note" role="status" hidden></p>
+    <ul class="records" id="records-list"></ul>
+    <input type="file" id="records-file" accept=".json,application/json" hidden>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="records-import">导入文件…</button>
+      <button type="button" class="btn primary" id="records-close">关闭</button>
     </div>
   </dialog>
 
@@ -316,7 +361,7 @@
         <li>棋子可以任意旋转、翻转。放下后不能移动。</li>
         <li>某位玩家无处可放时自动出局，其他人继续，直到所有人都放不下为止。</li>
       </ol>
-      <p><b>计分</b>：每个没放上去的格子扣 1 分；全部棋子放完加 15 分，如果最后一块是单格再加 5 分。分高者胜。</p>
+      <p><b>名次</b>：所有人都放不下时结束，手里剩下的格子越少越靠前；全部放完的排最前，最后一块是单格的更靠前。</p>
       <p><b>标准 20×20</b>：21 块方块棋子（共 89 格），各自从棋盘的一个角出发。<b>双人 14×14</b>：两人从棋盘内侧的两个起点出发。</p>
       <p><b>三角块</b>：六边形棋盘由三角形格子组成，每人 22 块三角棋子（1–6 格，共 110 格），可旋转 6 个方向。棋盘上有 6 个公共起点，第一块盖住任意一个空着的起点即可；4 人用边长 9 的棋盘，3 人用 8，2 人用 7。</p>
       <p><b>宝石阵（Gemblo）</b>：按原版规则。棋盘由六边形格子组成，每人 18 块棋子（单格 1、双格 1、三格 3、四格 5、五格 8，共 72 格，形状与原版一致）。6 方用整块棋盘、起点在 6 个角；4 方只用中间的方形区域、起点在它的 4 个角；3 方用中间较小的六边形区域、起点在它相间的 3 个角。</p>
@@ -340,7 +385,8 @@
       <p><b>电脑难度</b>：简单、普通、困难、<b>大师</b>（每步把候选往后推演两轮再选，明显强于困难）和<b>大模型</b>。</p>
       <p><b>大模型电脑</b>：在开局页面的「大模型设置」里填写 OpenAI 兼容接口（如 DeepSeek）或 Jev 的地址、密钥和模型，可以建多个配置，每个颜色选用不同的配置（在 Claude 发布的页面里也可以用页面自带的 Claude）。棋力来自大师的搜索：只把推演结果差不多一样好的几步交给模型，由它结合局势取舍；只有一步明显最好时直接走。玩家卡片上会显示它的理由。</p>
       <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。轮到别人时，你能实时看到他正在尝试的位置（虚线轮廓）。</p>
-      <p><b>剩余棋子</b>：每位玩家卡片上的小图标就是他还剩的棋子，点卡片可在托盘里看大图。</p>
+      <p><b>剩余棋子</b>：每位玩家卡片上显示还剩几块，小图标就是剩下的棋子，点卡片可在托盘里看大图。</p>
+      <p><b>对局记录</b>：对局结束时可以把这局保存到本机或导出成文件（包含每一步）。在开局页面的「对局记录」里可以回放、导出、删除，也可以导入别人发来的记录文件。回放时可以播放、逐步前进后退，或在下棋流程里点任意一步跳过去。</p>
       <p><b>操作</b>：点选托盘里的棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
     </div>
     <div class="dialog-actions">
@@ -355,6 +401,7 @@
 <script src="js/llm.js"></script>
 <script src="js/view3d.js"></script>
 <script src="js/online.js"></script>
+<script src="js/record.js"></script>
 <script src="js/net.js"></script>
 <script src="js/app.js"></script>
 </body>

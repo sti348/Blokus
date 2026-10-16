@@ -1,4 +1,4 @@
-/* 布局：桌面端三栏（玩家 | 棋盘 | 棋子托盘），窄屏纵向堆叠；界面强调色随当前行棋方变化 */
+/* 布局：桌面端三栏（玩家 | 棋盘 | 棋子托盘），窄屏纵向堆叠；界面强调色随当前行棋方变化。默认浅色主题 */
 :root {
   --bg: #eceef3;
   --surface: #f7f8fb;
@@ -18,6 +18,7 @@
   --danger: #c9362a;
   --shadow: 0 1px 2px rgba(27, 32, 48, .06), 0 6px 18px rgba(27, 32, 48, .07);
   --turn: var(--ink);
+  color-scheme: light;
 
   --font-display: "ZCOOL QingKe HuangYou", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-ui: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
@@ -28,30 +29,8 @@
   --r-lg: 16px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #10131a;
-    --surface: #171b24;
-    --raised: #1e2330;
-    --ink: #e8ebf2;
-    --ink-soft: #9aa2b4;
-    --line: #2b3140;
-    --board-frame: #222734;
-    --board-cell: #191d27;
-    --board-groove: #2d3342;
-    --p-blue: #4a82f0;
-    --p-yellow: #f4c12a;
-    --p-red: #f0574b;
-    --p-green: #33b65f;
-    --p-violet: #9b74f1;
-    --p-orange: #f8913a;
-    --danger: #f06a5e;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme="dark"] {
+/* 深色主题：只在设置里选了才用，不跟随系统 */
+:root[data-scheme="dark"] {
   --bg: #10131a;
   --surface: #171b24;
   --raised: #1e2330;
@@ -405,20 +384,21 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
   color: var(--ink-soft);
   font-size: 12px;
 }
-.pcard-score {
-  text-align: right;
+.pcard-left {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.pcard-left b {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   font-size: 18px;
   line-height: 1.1;
-}
-.pcard-score small {
-  display: block;
-  font-family: var(--font-ui);
-  font-weight: 400;
-  font-size: 11px;
-  color: var(--ink-soft);
+  color: var(--ink);
 }
 .pcard-bar {
   grid-column: 1 / -1;
@@ -660,7 +640,8 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 }
 .results td { padding: 9px 8px; border-bottom: 1px solid var(--line); }
 .results td.num, .results th.num { text-align: right; font-family: var(--font-num); }
-.results td.score { font-weight: 700; font-size: 16px; }
+.results td.left { font-weight: 700; font-size: 16px; white-space: nowrap; }
+.results td.left small { display: block; font-family: var(--font-ui); font-weight: 400; font-size: 11px; color: var(--ink-soft); }
 .results .who { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .results .who i {
   flex: none;
@@ -681,6 +662,89 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
   font-weight: 700;
 }
 .rank.first { background: var(--p-yellow); color: #3a2c00; }
+
+/* 对局记录 */
+.record-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.record-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: .06em; }
+.record-msg { font-size: 12px; color: var(--ink-soft); }
+.record-msg.block { margin: 0 0 10px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface); color: var(--ink); }
+.dialog.wide { width: min(640px, calc(100vw - 32px)); }
+.records {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(55vh, 460px);
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+.records-empty { padding: 18px 4px; color: var(--ink-soft); font-size: 13px; }
+.record-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.record-main { flex: 1 1 260px; min-width: 0; display: grid; gap: 5px; }
+.record-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.record-head span, .record-main small { color: var(--ink-soft); font-size: 12px; font-family: var(--font-num); }
+.record-main small { font-family: var(--font-ui); }
+.record-who { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+.record-who .who { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.record-who .who i { flex: none; width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+.record-btns { display: flex; gap: 6px; }
+
+/* 回放面板（替换托盘） */
+.dock.replaying .selected, .dock.replaying .tray, .dock.replaying #keys-help { display: none; }
+.replay-panel { display: grid; gap: 10px; min-width: 0; }
+.replay-controls { display: flex; gap: 6px; }
+.replay-controls .rp-play { flex: 1; min-width: 5.5em; }
+.replay-panel input[type="range"] { width: 100%; accent-color: var(--ink); }
+.replay-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.replay-moves {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.replay-moves button {
+  display: grid;
+  grid-template-columns: 2.4em 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.replay-moves li:last-child button { border-bottom: 0; }
+.replay-moves button:hover { background: var(--raised); }
+.replay-moves button[aria-current] { background: color-mix(in srgb, var(--c, var(--ink)) 16%, var(--raised)); font-weight: 600; }
+.replay-moves i { width: 10px; height: 10px; border-radius: 2px; background: var(--c); }
+.rp-n { color: var(--ink-soft); font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 12px; }
+.rp-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-what { color: var(--ink-soft); white-space: nowrap; }
+.rp-note { grid-column: 3 / -1; font-size: 12px; font-weight: 400; color: var(--ink-soft); }
 
 .rules ol { padding-left: 1.4em; margin: 0 0 12px; display: grid; gap: 4px; }
 .rules p { max-width: 65ch; }
@@ -868,10 +932,11 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
   }
   .pcard { padding: 7px 9px; gap: 2px 8px; }
   .pcard-pieces i { width: 14px; height: 14px; }
-  .pcard-score { font-size: 15px; }
+  .pcard-left b { font-size: 15px; }
   .board-area { container-type: normal; height: auto; }
   .board-wrap { width: 100%; }
   .dock { max-height: none; overflow: visible; }
+  .replay-moves { max-height: 34vh; }
   .keys { display: none; }
   .topbar { flex-wrap: wrap; gap: 8px; }
   .turn { order: 3; flex-basis: 100%; }
