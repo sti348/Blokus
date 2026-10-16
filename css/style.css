@@ -465,6 +465,7 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .llm-fields .field-label { margin-top: 4px; }
 .llm-fields code { font-size: 12px; }
 .llm-timeout input { width: 5.5em; }
+.llm-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .field-note.warn { color: var(--danger); }
 .llm-status { margin: 0; min-height: 1.4em; font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
 .llm-status.ok { color: var(--p-green); }

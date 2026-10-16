@@ -246,24 +246,32 @@
 
   <dialog id="llm-dialog" class="dialog">
     <h2 class="dialog-title">大模型电脑</h2>
-    <p class="dialog-note">把电脑的难度设为「大模型」后，由这里设置的模型来下棋：程序先挑出十几步合法的好棋，再让模型选一步并说一句理由。出错或超时时，这一步改由困难电脑代下。联机时用房主这台设备的设置。</p>
+    <p class="dialog-note">把电脑的难度设为「大模型」后，由这里设置的模型来下棋：程序先算出几步差不多一样好的合法走法，再让模型结合局势选一步；只有一步明显最好时直接走，不问模型。出错或超时时，这一步由困难电脑代下。联机时用房主这台设备的设置。</p>
     <form id="llm-form" class="llm-form" autocomplete="off">
-      <div class="field" id="llm-provider-field" hidden>
+      <div class="field" id="llm-provider-field">
         <span class="field-label">模型来源</span>
         <div class="seg small" role="radiogroup" aria-label="模型来源">
           <label><input type="radio" name="llm-provider" id="llm-provider-openai" value="openai"><span>OpenAI 兼容接口</span></label>
-          <label><input type="radio" name="llm-provider" id="llm-provider-claude" value="claude"><span>本页面自带的 Claude</span></label>
+          <label><input type="radio" name="llm-provider" id="llm-provider-jev" value="jev"><span>Jev（TypeSafe）</span></label>
+          <label id="llm-provider-claude-label" hidden><input type="radio" name="llm-provider" id="llm-provider-claude" value="claude"><span>本页面自带的 Claude</span></label>
         </div>
       </div>
-      <div id="llm-openai" class="llm-fields">
+      <div id="llm-endpoint" class="llm-fields">
         <label class="field-label" for="llm-url">接口地址</label>
         <input type="url" id="llm-url" placeholder="https://api.openai.com/v1" spellcheck="false">
         <label class="field-label" for="llm-key">API Key</label>
         <input type="password" id="llm-key" placeholder="sk-…（本地模型可留空）" spellcheck="false" autocomplete="off">
         <label class="field-label" for="llm-model">模型</label>
-        <input type="text" id="llm-model" placeholder="例如 gpt-4o-mini、deepseek-chat、qwen-plus" spellcheck="false">
-        <p class="field-note">支持 OpenAI Chat Completions 格式的接口都可以用，例如 OpenAI、DeepSeek、通义千问、Kimi、智谱、OpenRouter、本地的 Ollama / LM Studio。地址填到 <code>/v1</code> 为止。密钥只保存在这台设备的浏览器里，只会发送给你填写的地址。</p>
-        <p class="field-note warn" id="llm-artifact-note" hidden>Claude 发布的页面不能访问外部网络，这里请改用「本页面自带的 Claude」；要用 OpenAI 兼容接口，请在本地打开 index.html 或运行 server.js。</p>
+        <input type="text" id="llm-model" placeholder="例如 deepseek-chat、gpt-4o-mini、qwen-plus" spellcheck="false">
+        <label class="check" id="llm-nothink-row"><input type="checkbox" id="llm-nothink"><span>关闭深度思考（DeepSeek、智谱、通义千问会快很多，推荐）</span></label>
+        <p class="field-note" id="llm-openai-note">支持 OpenAI Chat Completions 格式的接口都可以用，例如 DeepSeek、OpenAI、通义千问、Kimi、智谱、OpenRouter、本地的 Ollama / LM Studio。地址填到 <code>/v1</code> 为止。</p>
+        <div class="llm-presets" id="llm-jev-presets" hidden>
+          <button type="button" class="btn small" id="llm-jev-typesafe">填入 TypeSafe 官方</button>
+          <button type="button" class="btn small" id="llm-jev-openrouter">填入 OpenRouter</button>
+        </div>
+        <p class="field-note" id="llm-jev-note" hidden>Jev 是 TypeSafe 的决策模型：不写文字，直接从候选里选一步并给出把握，通常不到一秒。用 TypeSafe 控制台的密钥，或者 OpenRouter 的密钥（地址 <code>https://openrouter.ai/api/v1</code>，模型 <code>~typesafe/jev-latest</code>，会自动使用它的 Decisions 接口）。也可以填兼容 <code>/v1/systemone</code> 接口的网关或本地服务。</p>
+        <p class="field-note">密钥只保存在这台设备的浏览器里，只会发送给你填写的地址。</p>
+        <p class="field-note warn" id="llm-artifact-note" hidden>Claude 发布的页面不能访问外部网络，这里请改用「本页面自带的 Claude」；要用 DeepSeek、Jev 等接口，请在本地打开 index.html 或运行 server.js。</p>
       </div>
       <div id="llm-claude" class="llm-fields" hidden>
         <label class="field-label" for="llm-tier">档位</label>
@@ -310,7 +318,7 @@
       <p>操作：R 水平转，F 前翻，G 侧翻；Q / E 或棋盘角落的按钮转视角，也可以拖动空白处旋转视角。</p>
       <p><b>三棱柱</b>：三角块的立体版。六边形地面由三角形组成，每一格是一个三棱柱，棋子同样从上方落下堆叠。每人 19 块三棱柱棋子（1–4 格，共 66 格）：可以绕竖轴每次转 60°（R），也可以上下翻转（F）。自己的棋子不能面贴面（侧面的长方形或上下的三角形都不行），必须棱或角相接。4 人用边长 4、高 4 层的棋盘，3 人边长 3、高 6 层，2 人边长 3、高 5 层；各自从六边形的一个角出发。</p>
       <p><b>透视</b>（默认关闭）：按 X 或眼睛按钮打开后，别人的方块变成半透明，挡在待放棋子前面的更淡；自己的方块保持不透明。用 [ ] 或滑块只看下面几层。</p>
-      <p><b>大模型电脑</b>：电脑难度可以选「大模型」，在开局页面的「大模型设置」里填写 OpenAI 兼容接口的地址、密钥和模型（在 Claude 发布的页面里也可以用页面自带的 Claude）。程序先挑出十几步合法的好棋，再由模型选一步，玩家卡片上会显示它的理由。</p>
+      <p><b>大模型电脑</b>：电脑难度可以选「大模型」，在开局页面的「大模型设置」里填写 OpenAI 兼容接口（如 DeepSeek）或 Jev 的地址、密钥和模型（在 Claude 发布的页面里也可以用页面自带的 Claude）。程序先算出几步差不多一样好的走法，再由模型结合局势选一步；只有一步明显最好时直接走。玩家卡片上会显示它的理由。</p>
       <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。轮到别人时，你能实时看到他正在尝试的位置（虚线轮廓）。</p>
       <p><b>剩余棋子</b>：每位玩家卡片上的小图标就是他还剩的棋子，点卡片可在托盘里看大图。</p>
       <p><b>操作</b>：点选托盘里的棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>

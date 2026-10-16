@@ -1,7 +1,10 @@
 /*
- * 大模型电脑：程序先用困难电脑的估值挑出十几步合法的好棋，连同局面一起交给大模型，
- * 由它选一步并给出一句理由。模型可以是任何 OpenAI 兼容接口（地址、密钥、模型由玩家填写），
- * 在 Claude 发布的页面里也可以用页面自带的 Claude。
+ * 大模型电脑。程序先用困难电脑的估值找出几步“差不多一样好”的合法走法（分差很小），
+ * 只有一步明显最好时直接走，不问模型；否则把局面和这几步交给模型，由它做战略取舍：
+ *   openai —— 任何 OpenAI 兼容的 Chat Completions 接口，回答一个编号和一句理由
+ *   jev    —— TypeSafe 的 Jev（System One 决策模型），用一道选择题直接返回选项和把握
+ *   claude —— Claude 发布的页面自带的 Claude
+ * 候选都在困难电脑认可的范围内，所以模型怎么选都不会比困难电脑差太多。
  * 出错、超时或回答无法解析时 decide() 会失败，由调用方改用内置电脑。
  */
 (function (root, factory) {
@@ -10,45 +13,140 @@
 })(typeof self !== 'undefined' ? self : this, function (Engine, AI) {
   'use strict';
 
-  var PROVIDERS = ['openai', 'claude'];
+  var PROVIDERS = ['openai', 'jev', 'claude'];
   var TIERS = ['quick', 'default', 'complex'];
-  var DEFAULTS = { provider: 'openai', baseUrl: '', apiKey: '', model: '', tier: 'quick', timeout: 60 };
-  var CANDIDATES = 12;
+  var JEV_URL = 'https://api.typesafe.ai/v1';
+  var JEV_MODEL = 'jev-latest';
+  // 也可以经 OpenRouter 调用 Jev（它的 Decisions 接口，请求和回答格式相同）
+  var JEV_OPENROUTER_URL = 'https://openrouter.ai/api/v1';
+  var JEV_OPENROUTER_MODEL = '~typesafe/jev-latest';
+  // 候选：与最佳一步的估值差不超过 MARGIN，最多 MAX_CANDIDATES 个（自对弈里这样选最差的一步也接近困难电脑）
+  var MARGIN = 0.4;
+  var MAX_CANDIDATES = 5;
   var LETTER = { blue: 'B', yellow: 'Y', red: 'R', green: 'G', violet: 'V', orange: 'O' };
+
+  function defaults() {
+    return {
+      provider: 'openai',
+      openai: { baseUrl: '', apiKey: '', model: '' },
+      jev: { baseUrl: JEV_URL, apiKey: '', model: JEV_MODEL },
+      tier: 'quick',
+      timeout: 30,
+      noThink: true
+    };
+  }
 
   function str(v, max) { return typeof v === 'string' ? v.trim().slice(0, max) : ''; }
 
+  function endpointOf(raw, d) {
+    raw = raw && typeof raw === 'object' ? raw : {};
+    return { baseUrl: str(raw.baseUrl, 300) || d.baseUrl, apiKey: str(raw.apiKey, 500), model: str(raw.model, 120) || d.model };
+  }
+
   function normalizeSettings(raw) {
-    var s = {};
-    for (var k in DEFAULTS) s[k] = DEFAULTS[k];
+    var s = defaults();
     if (!raw || typeof raw !== 'object') return s;
     if (PROVIDERS.indexOf(raw.provider) >= 0) s.provider = raw.provider;
-    s.baseUrl = str(raw.baseUrl, 300);
-    s.apiKey = str(raw.apiKey, 500);
-    s.model = str(raw.model, 120);
+    // 旧版设置把 OpenAI 兼容接口的地址、密钥、模型放在最外层
+    s.openai = endpointOf(raw.openai || { baseUrl: raw.baseUrl, apiKey: raw.apiKey, model: raw.model }, s.openai);
+    s.jev = endpointOf(raw.jev, s.jev);
     if (TIERS.indexOf(raw.tier) >= 0) s.tier = raw.tier;
     var t = Math.round(Number(raw.timeout));
-    if (isFinite(t)) s.timeout = Math.max(10, Math.min(300, t));
+    if (isFinite(t) && raw.timeout !== null && raw.timeout !== '') s.timeout = Math.max(5, Math.min(300, t));
+    if (typeof raw.noThink === 'boolean') s.noThink = raw.noThink;
     return s;
   }
 
-  // OpenAI 兼容接口需要地址和模型名；密钥可以为空（本地的 Ollama 等）
+  function validUrl(u) { return /^https?:\/\/[^\s]+$/i.test(u || ''); }
+
+  // 接口地址和模型都填了才算设置好；密钥可以为空（本地模型）
   function isReady(s) {
     if (!s) return false;
     if (s.provider === 'claude') return true;
-    return /^https?:\/\/[^\s]+$/i.test(s.baseUrl) && !!s.model;
+    var ep = s[s.provider];
+    return !!ep && validUrl(ep.baseUrl) && !!ep.model;
   }
 
-  // 地址填到 /v1 即可，也接受完整的 …/chat/completions
-  function endpointOf(baseUrl) {
-    var u = String(baseUrl || '').trim().replace(/\/+$/, '');
+  function trimUrl(u) { return String(u || '').trim().replace(/\/+$/, ''); }
+
+  // 地址填到 /v1 即可，也接受完整的 …/chat/completions、…/systemone
+  function chatUrl(baseUrl) {
+    var u = trimUrl(baseUrl);
     return /\/chat\/completions$/i.test(u) ? u : u + '/chat/completions';
+  }
+
+  // TypeSafe 官方：…/v1/systemone；OpenRouter：/api/alpha/decisions；完整地址原样使用
+  function jevUrl(baseUrl) {
+    var u = trimUrl(baseUrl);
+    if (/\/(systemone|decisions)$/i.test(u)) return u;
+    var m = /^(https?:\/\/(?:[^\/]+\.)?openrouter\.ai)(\/|$)/i.exec(u);
+    if (m) return m[1] + '/api/alpha/decisions';
+    return u + '/systemone';
+  }
+
+  function hostOf(u) {
+    var m = /^https?:\/\/([^\/:?#]+)/i.exec(String(u || '').trim());
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  // 已知会默认“深度思考”的接口：关掉思考能从几十秒降到几秒
+  function noThinkParams(baseUrl) {
+    var h = hostOf(baseUrl);
+    if (/(^|\.)deepseek\.com$/.test(h) || /(^|\.)bigmodel\.cn$/.test(h) || /(^|\.)z\.ai$/.test(h)) {
+      return { thinking: { type: 'disabled' }, max_tokens: 200 };
+    }
+    if (/(^|\.)dashscope(-intl)?\.aliyuncs\.com$/.test(h)) return { enable_thinking: false, max_tokens: 200 };
+    return null;
   }
 
   function llmError(code, message) {
     var e = new Error(message);
     e.code = code;
     return e;
+  }
+
+  /* ================= 候选走法 ================= */
+
+  function countMoves(state, p) {
+    var n = 0;
+    Engine.forEachMove(state, p, function () { n++; });
+    return n;
+  }
+
+  /**
+   * 几步估值相近的好棋（按估值从高到低），附带给模型看的特征：
+   * mine / opp：落子后自己 / 对手合计可走步数相对现在的变化（百分比）；
+   * blocks：[{ player, n }] 压住各家对手的可落子角点数。
+   */
+  function candidates(state) {
+    var ranked = AI.rankMoves(state, 12);
+    if (!ranked.length) return [];
+    var best = ranked[0].score;
+    var list = ranked.filter(function (c) { return c.score >= best - MARGIN; }).slice(0, MAX_CANDIDATES);
+    if (list.length < 2) return list;
+    var me = state.current, topo = state.topo;
+    var myBefore = countMoves(state, me), oppBefore = 0;
+    var opps = [];
+    state.players.forEach(function (pl, o) {
+      if (o === me || pl.done) return;
+      oppBefore += countMoves(state, o);
+      var forb = Engine.forbiddenMask(state.board, topo, o);
+      opps.push({ player: o, mark: Engine.anchorMask(state.board, topo, o, pl, forb).mark });
+    });
+    function pct(after, before) { return Math.round((after - before) / Math.max(1, before) * 100); }
+    list.forEach(function (c) {
+      var m = c.move;
+      var idx = Engine.placementIndices(state, m.piece, m.orient, m.x, m.y, m.z);
+      c.mine = pct(c.myMoves, myBefore);
+      c.opp = pct(c.oppMoves, oppBefore);
+      c.blocks = [];
+      opps.forEach(function (o) {
+        var n = 0;
+        for (var k = 0; k < idx.length; k++) if (o.mark[idx[k]]) n++;
+        if (n) c.blocks.push({ player: o.player, n: n });
+      });
+    });
+    return list;
   }
 
   /* ================= 提示词 ================= */
@@ -85,8 +183,7 @@
     var lines = [];
     var x, y, z, i;
     if (topo.dims === 2) {
-      var lead2 = '      ';
-      lines = lines.concat(header(topo.cols, 2, lead2));
+      lines = lines.concat(header(topo.cols, 2, '      '));
       for (y = 0; y < topo.rows; y++) {
         var row = '';
         for (x = 0; x < topo.cols; x++) {
@@ -98,8 +195,7 @@
       return lines.join('\n');
     }
     var W = topo.cols, D = topo.depth, H = topo.height;
-    var lead3 = '      ';
-    lines = lines.concat(header(W, 3, lead3));
+    lines = lines.concat(header(W, 3, '      '));
     for (z = 0; z < D; z++) {
       var r = '';
       for (x = 0; x < W; x++) {
@@ -120,61 +216,90 @@
     var topo = state.topo;
     if (topo.dims === 3) {
       return '三维棋盘（' + (topo.kind === 'prism' ? '地面由三角形组成，每格是一根三棱柱' : '每格是一个立方体') + '，最高 ' + topo.height + ' 层）。' +
-        '棋子从上方竖直落下，停在地面或任何人的棋子上。自己的棋子之间不能面贴面，新棋子必须和自己已有的棋子共享一条棱或一个顶点；' +
-        '可以叠在别人的棋子上。第一块必须压住自己在地面上的起始角。';
+        '棋子从上方落下，停在地面或任何人的棋子上。自己的棋子不能面贴面，新棋子必须和自己的棋子共享棱或顶点；可以叠在别人的棋子上。';
     }
-    return (topo.kind === 'tri' ? '六边形棋盘由三角形格子组成（相邻两格朝向相反）' : '方格棋盘') + '。' +
-      '第一块必须盖住起点；之后每块都必须和自己已有的棋子角对角相接，且不能和自己的棋子边贴边；和别人的棋子边贴边没关系。';
+    return (topo.kind === 'tri' ? '六边形三角格棋盘' : '方格棋盘') + '。每块新棋子必须和自己的棋子角对角相接，不能和自己的棋子边贴边；和别人的棋子贴边没关系。';
   }
 
   function cellText(state, c) {
     return state.topo.dims === 3 ? '(' + c[0] + ',' + c[2] + ',' + (c[1] + 1) + '层)' : '(' + c[0] + ',' + c[1] + ')';
   }
 
-  function playersText(state, me) {
-    var topo = state.topo;
-    return state.players.map(function (pl, p) {
+  function signed(n) { return (n > 0 ? '+' : n < 0 ? '−' : '±') + Math.abs(n); }
+
+  function situationText(state) {
+    var me = state.current, topo = state.topo;
+    var scores = state.players.map(function (pl) { return Engine.scoreOf(pl); });
+    var lead = -1;
+    scores.forEach(function (s, p) { if (p !== me && (lead < 0 || s > scores[lead])) lead = p; });
+    var placed = state.actions.filter(function (a) { return a.type === 'place'; }).length;
+    var lines = ['第 ' + (placed + 1) + ' 手，轮到' + state.players[me].label + '方（字母 ' + letterOf(state, me) + '）。'];
+    state.players.forEach(function (pl, p) {
       var left = pl.remaining.filter(Boolean).length;
-      var line = pl.label + '方（' + letterOf(state, p) + '）' + (p === me ? '【你】' : '') + '：剩 ' + left + ' 块共 ' + pl.remainingSquares + ' 格';
-      if (pl.done) return line + '，已无处可放';
-      var forb = Engine.forbiddenMask(state.board, topo, p);
-      var anchors = Engine.anchorMask(state.board, topo, p, pl, forb).list.length;
-      return line + '，可落子角点 ' + anchors + ' 个';
-    }).join('\n');
+      var line = pl.label + '方（' + letterOf(state, p) + '）' + (p === me ? '【你】' : p === lead ? '【对手中领先】' : '') +
+        '：得分 ' + scores[p] + '，剩 ' + left + ' 块 ' + pl.remainingSquares + ' 格';
+      if (pl.done) line += '，已无处可放';
+      else {
+        var forb = Engine.forbiddenMask(state.board, topo, p);
+        line += '，可落子角点 ' + Engine.anchorMask(state.board, topo, p, pl, forb).list.length + ' 个';
+      }
+      lines.push(line);
+    });
+    return lines.join('\n');
   }
 
-  function candidatesText(state, cands) {
-    return cands.map(function (c, k) {
-      var m = c.move;
-      var piece = state.set.pieces[m.piece];
-      var cells = Engine.placementCells(state, m.piece, m.orient, m.x, m.y, m.z);
-      return '#' + (k + 1) + ' 「' + piece.name + '」' + c.size + ' 格：' + cells.map(function (cc) { return cellText(state, cc); }).join(' ') +
-        '｜己方角点 ' + (c.anchors >= 0 ? '+' : '') + c.anchors + '，压住对手角点 ' + c.blocked +
-        '｜落子后你有 ' + c.myMoves + ' 种走法，对手合计 ' + c.oppMoves + ' 种';
-    }).join('\n');
+  function candidateText(state, c) {
+    var m = c.move;
+    var piece = state.set.pieces[m.piece];
+    var cells = Engine.placementCells(state, m.piece, m.orient, m.x, m.y, m.z);
+    var blocks = c.blocks.length
+      ? '压住' + c.blocks.map(function (b) { return state.players[b.player].label + '方 ' + b.n + ' 个'; }).join('、') + '角点'
+      : '不压对手角点';
+    return '「' + piece.name + '」' + c.size + ' 格 ' + cells.map(function (cc) { return cellText(state, cc); }).join(' ') +
+      '｜你的走法 ' + signed(c.mine) + '%，对手走法 ' + signed(c.opp) + '%｜' + blocks;
   }
+
+  // 固定的说明放在最前面，便于接口缓存前缀
+  var SYSTEM = '你是角斗士棋（Blokus）高手，替一方挑选下一步。终局时每个没放上棋盘的格子扣 1 分。' +
+    '程序已经算出几步合法而且差不多一样好的候选，#1 按程序估值略优。请结合局势取舍：压制领先的对手、' +
+    '抢对手正要进入的空地、给自己留下可落子的角点、别把自己困死。没有明显理由就选 #1。' +
+    '只回复一行 JSON：{"choice": 编号, "reason": "不超过 20 字的中文理由"}';
 
   function buildMessages(state, cands) {
-    var me = state.current;
-    var pl = state.players[me];
-    var placed = state.actions.filter(function (a) { return a.type === 'place'; }).length;
     var legend = state.topo.dims === 3
-      ? '俯视图：每列显示最上面那格的颜色字母和它在第几层（如 B2），. 为空列；坐标写作 (x,z,第几层)'
-      : '字母为各方棋子，. 为空格' + (state.topo.kind === 'tri' ? '，空白处不在棋盘内' : '') + '；坐标写作 (x,y)';
-    var system = '你是角斗士棋（Blokus）高手，正在替' + pl.label + '方挑选下一步。下面的候选走法都已经确认合法，只能从中选一个。' +
-      '只回复一行 JSON，不要输出别的内容。';
+      ? '俯视图，每列显示最上面那格的颜色和层数（如 B2），. 为空列'
+      : '字母为各方棋子，. 为空格';
     var user = [
       '【规则】' + rulesText(state),
-      '【计分】终局时每个没放上棋盘的格子扣 1 分，全部放完加 15 分。好棋通常：先放大块；朝空旷处和中心扩张；给自己留下更多可落子的角点；占掉或堵住对手的角点；别把自己困死。',
-      '【局面】第 ' + (placed + 1) + ' 手，轮到' + pl.label + '方（字母 ' + letterOf(state, me) + '）。',
-      playersText(state, me),
+      '【局面】' + situationText(state),
       '【棋盘】' + legend,
       boardText(state),
-      '【候选走法】按内置估值从高到低排列，仅供参考：',
-      candidatesText(state, cands),
-      '请回复：{"choice": 编号, "reason": "不超过 30 字的中文理由"}'
+      '【候选】',
+      cands.map(function (c, k) { return '#' + (k + 1) + ' ' + candidateText(state, c); }).join('\n')
     ].join('\n');
-    return [{ role: 'system', content: system }, { role: 'user', content: user }];
+    return [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }];
+  }
+
+  // Jev 的选择题：局面放在 state，候选放在 criteria（键为 m1、m2…）
+  function buildJevRequest(state, cands, model) {
+    var me = state.players[state.current];
+    var criteria = {};
+    cands.forEach(function (c, k) {
+      criteria['m' + (k + 1)] = (k === 0 ? '程序估值略优。' : '') + candidateText(state, c);
+    });
+    return {
+      model: model,
+      state: '角斗士棋（Blokus）。' + rulesText(state) + '终局时每个没放上棋盘的格子扣 1 分。\n' +
+        situationText(state) + '\n棋盘：\n' + boardText(state),
+      questions: {
+        move: {
+          type: 'choice',
+          instructions: '你执' + me.label + '方。以下几步都合法且差不多好，选出最有利于你最终得分的一步：' +
+            '压制领先的对手、抢占空地、给自己留下可落子的角点、别把自己困死。',
+          criteria: criteria
+        }
+      }
+    };
   }
 
   /* ================= 解析回答 ================= */
@@ -212,6 +337,26 @@
     return { index: idx - 1, reason: cleanReason(reason) };
   }
 
+  // Jev 的回答：answers.move = { choice: 'm2', probabilities: {...}, confidence }
+  function parseJev(data, n, name) {
+    var answers = data && data.answers;
+    if (!answers || typeof answers !== 'object') return null;
+    var a = answers[name || 'move'];
+    if (a == null) a = answers[Object.keys(answers)[0]];
+    if (a == null) return null;
+    var probs = a && typeof a === 'object' && a.probabilities && typeof a.probabilities === 'object' ? a.probabilities : null;
+    var key = typeof a === 'string' ? a : a.choice != null ? a.choice : a.answer != null ? a.answer : a.value;
+    if (key == null && probs) {
+      Object.keys(probs).forEach(function (k) { if (key == null || probs[k] > probs[key]) key = k; });
+    }
+    var conf = typeof a.confidence === 'number' ? a.confidence : probs && typeof probs[key] === 'number' ? probs[key] : null;
+    var m = /^m?(\d+)$/i.exec(String(key == null ? '' : key).trim());
+    if (!m) return { key: key == null ? '' : String(key), index: -1, confidence: conf };
+    var idx = Number(m[1]);
+    if (!(idx >= 1 && idx <= n)) return null;
+    return { key: String(key), index: idx - 1, confidence: conf };
+  }
+
   /* ================= 调用模型 ================= */
 
   // 把外部的取消信号和超时合成一个
@@ -234,20 +379,14 @@
     };
   }
 
-  function contentOf(data) {
-    var ch = data && data.choices && data.choices[0];
-    var c = ch && (ch.message ? ch.message.content : ch.text);
-    if (Array.isArray(c)) {
-      c = c.map(function (part) { return typeof part === 'string' ? part : part && (part.text || ''); }).join('');
-    }
-    return typeof c === 'string' ? c : '';
-  }
-
   function httpError(status, data, text) {
     var msg = data && data.error && (data.error.message || (typeof data.error === 'string' && data.error));
+    if (!msg && data && typeof data.message === 'string') msg = data.message;
     if (!msg) msg = String(text || '').replace(/\s+/g, ' ').slice(0, 120);
     var hint = status === 401 || status === 403 ? '密钥不对或没有权限' : status === 404 ? '地址或模型名不对' : status === 429 ? '请求太频繁或额度用完' : '';
-    return llmError('http', '接口返回 ' + status + (hint ? '（' + hint + '）' : '') + (msg ? '：' + msg : ''));
+    var e = llmError('http', '接口返回 ' + status + (hint ? '（' + hint + '）' : '') + (msg ? '：' + msg : ''));
+    e.status = status;
+    return e;
   }
 
   function postJson(f, url, headers, body, signal) {
@@ -256,31 +395,73 @@
         var data = null;
         try { data = JSON.parse(text); } catch (e) { data = null; }
         if (!res.ok) throw httpError(res.status, data, text);
-        var content = contentOf(data);
-        if (!content) throw llmError('empty', '接口没有返回内容');
-        return content;
+        if (!data) throw llmError('bad_reply', '接口返回的不是 JSON');
+        return data;
       });
     });
   }
 
-  function askOpenAI(settings, messages, env, signal) {
-    var f = env.fetch || (typeof fetch === 'function' ? fetch.bind(null) : null);
+  function fetchOf(env) {
+    return env.fetch || (typeof fetch === 'function' ? fetch.bind(null) : null);
+  }
+
+  // 直连失败（多半是接口不允许网页跨域访问）时，联机服务器开了转发就改走服务器
+  function post(env, url, key, body, signal) {
+    var f = fetchOf(env);
     if (!f) return Promise.reject(llmError('network', '当前环境不能发网络请求'));
-    var url = endpointOf(settings.baseUrl);
-    var body = { model: settings.model, messages: messages, stream: false };
     var headers = { 'Content-Type': 'application/json' };
-    if (settings.apiKey) headers.Authorization = 'Bearer ' + settings.apiKey;
-    function viaProxy() {
-      return postJson(f, env.proxy, { 'Content-Type': 'application/json' }, { url: url, key: settings.apiKey, body: body }, signal);
-    }
+    if (key) headers.Authorization = 'Bearer ' + key;
     return postJson(f, url, headers, body, signal).catch(function (err) {
       if (err && err.code) throw err;
       if (signal.aborted) throw err;
-      // 浏览器直连失败（多半是接口不允许跨域访问）：联机服务器开了转发就改走服务器
-      if (env.proxy) return viaProxy();
+      if (env.proxy) return postJson(f, env.proxy, { 'Content-Type': 'application/json' }, { url: url, key: key, body: body }, signal);
       throw llmError('network', '连不上接口：地址不对，或者这个接口不允许网页直接访问（跨域）。' +
         '可以改用支持跨域的接口，或用 LLM_PROXY=1 node server.js 启动服务器转发');
     });
+  }
+
+  function messageOf(data) {
+    var ch = data && data.choices && data.choices[0];
+    return ch && (ch.message || { content: ch.text }) || {};
+  }
+
+  function contentOf(msg) {
+    var c = msg.content;
+    if (Array.isArray(c)) {
+      c = c.map(function (part) { return typeof part === 'string' ? part : part && (part.text || ''); }).join('');
+    }
+    return typeof c === 'string' ? c : '';
+  }
+
+  // 带上“关闭思考”参数被接口拒绝过的地址和模型，以后不再带
+  var rejectedExtras = {};
+
+  function askOpenAI(settings, messages, env, signal) {
+    var ep = settings.openai;
+    var url = chatUrl(ep.baseUrl);
+    var cacheKey = url + '|' + ep.model;
+    var extras = settings.noThink && !rejectedExtras[cacheKey] ? noThinkParams(ep.baseUrl) : null;
+    function send(withExtras) {
+      var body = { model: ep.model, messages: messages, stream: false };
+      if (withExtras) for (var k in withExtras) body[k] = withExtras[k];
+      return post(env, url, ep.apiKey, body, signal);
+    }
+    return send(extras).catch(function (err) {
+      if (!extras || !err || err.status !== 400) throw err;
+      rejectedExtras[cacheKey] = true;
+      return send(null);
+    }).then(function (data) {
+      var msg = messageOf(data);
+      var text = contentOf(msg);
+      if (!text) throw llmError('empty', '接口没有返回内容');
+      var thought = msg.reasoning_content || msg.reasoning || '';
+      return { text: text, thinking: typeof thought === 'string' && thought.length > 0 };
+    });
+  }
+
+  function askJev(settings, request, env, signal) {
+    var ep = settings.jev;
+    return post(env, jevUrl(ep.baseUrl), ep.apiKey, request, signal);
   }
 
   var SAMPLE_ERRORS = {
@@ -295,7 +476,7 @@
     if (!env.sample) return Promise.reject(llmError('unavailable', '只有在 Claude 发布的页面里才能用页面自带的 Claude'));
     var prompt = messages.map(function (m) { return m.content; }).join('\n\n');
     return Promise.resolve(env.sample(prompt, { modelTier: settings.tier, signal: signal, cache: false })).then(function (r) {
-      return r && r.text ? r.text : '';
+      return { text: r && r.text ? r.text : '', thinking: false };
     }, function (e) {
       var code = e && e.code;
       if (code === 'cancelled') throw llmError('cancelled', '已取消');
@@ -303,21 +484,14 @@
     });
   }
 
-  /**
-   * 发一轮对话，返回模型的回答文字。
-   * env：{ signal, fetch, proxy: 服务器转发地址, sample: Claude 页面的 sample 函数 }
-   */
-  function ask(settings, messages, env) {
+  // 统一处理超时与取消
+  function guarded(settings, env, run) {
     env = env || {};
-    settings = normalizeSettings(settings);
     if (!isReady(settings)) return Promise.reject(llmError('setup', '还没有填写大模型的接口地址和模型'));
     var link = linkedSignal(env.signal, settings.timeout * 1000);
-    var p = settings.provider === 'claude'
-      ? askClaude(settings, messages, env, link.signal)
-      : askOpenAI(settings, messages, env, link.signal);
-    return p.then(function (text) {
+    return run(link.signal).then(function (r) {
       link.done();
-      return text;
+      return r;
     }, function (err) {
       link.done();
       if (link.timedOut()) throw llmError('timeout', '大模型超过 ' + settings.timeout + ' 秒没有回答');
@@ -327,39 +501,98 @@
   }
 
   /**
-   * 为当前玩家选一步。成功时返回 { move, reason, index, asked }；没有合法落子时 move 为 null。
-   * 只有一步可走时不问模型（asked 为 false）。
+   * 发一轮对话（openai / claude），返回 { text, thinking }。
+   * env：{ signal, fetch, proxy: 服务器转发地址, sample: Claude 页面的 sample 函数 }
    */
-  function decide(state, settings, env) {
-    var cands = AI.rankMoves(state, CANDIDATES);
-    if (!cands.length) return Promise.resolve({ move: null, reason: '', index: -1, asked: false });
-    if (cands.length === 1) return Promise.resolve({ move: cands[0].move, reason: '只剩这一步可走', index: 0, asked: false });
-    var messages = buildMessages(state, cands);
-    return ask(settings, messages, env).then(function (text) {
-      var r = parseReply(text, cands.length);
-      if (!r) throw llmError('bad_reply', '大模型的回答里没有有效的候选编号');
-      return { move: cands[r.index].move, reason: r.reason, index: r.index, asked: true };
+  function ask(settings, messages, env) {
+    settings = normalizeSettings(settings);
+    env = env || {};
+    return guarded(settings, env, function (signal) {
+      return settings.provider === 'claude'
+        ? askClaude(settings, messages, env, signal)
+        : askOpenAI(settings, messages, env, signal);
     });
   }
 
-  // 测试连接：返回 { text, ms }
+  function confidenceNote(conf) {
+    return typeof conf === 'number' && isFinite(conf) ? '把握 ' + Math.round(Math.max(0, Math.min(1, conf)) * 100) + '%' : '';
+  }
+
+  /**
+   * 为当前玩家选一步。成功时返回 { move, reason, index, asked, options }；没有合法落子时 move 为 null。
+   * 只有一步明显最好时不问模型（asked 为 false）。
+   */
+  function decide(state, settings, env) {
+    settings = normalizeSettings(settings);
+    env = env || {};
+    var cands = candidates(state);
+    if (!cands.length) return Promise.resolve({ move: null, reason: '', index: -1, asked: false, options: 0 });
+    if (cands.length === 1) return Promise.resolve({ move: cands[0].move, reason: '', index: 0, asked: false, options: 1 });
+    if (settings.provider === 'jev') {
+      var request = buildJevRequest(state, cands, settings.jev.model);
+      return guarded(settings, env, function (signal) { return askJev(settings, request, env, signal); }).then(function (data) {
+        var r = parseJev(data, cands.length);
+        if (!r || r.index < 0) throw llmError('bad_reply', 'Jev 的回答里没有有效的候选' + (r && r.key ? '（' + cleanReason(r.key) + '）' : ''));
+        var conf = confidenceNote(r.confidence);
+        return {
+          move: cands[r.index].move,
+          reason: '在 ' + cands.length + ' 步好棋里选了第 ' + (r.index + 1) + ' 步' + (conf ? '，' + conf : ''),
+          index: r.index,
+          asked: true,
+          options: cands.length
+        };
+      });
+    }
+    return ask(settings, buildMessages(state, cands), env).then(function (r) {
+      var p = parseReply(r.text, cands.length);
+      if (!p) throw llmError('bad_reply', '大模型的回答里没有有效的候选编号');
+      return { move: cands[p.index].move, reason: p.reason, index: p.index, asked: true, options: cands.length };
+    });
+  }
+
+  // 测试连接：返回 { text, ms, thinking }
   function ping(settings, env) {
+    settings = normalizeSettings(settings);
+    env = env || {};
     var t0 = Date.now();
-    return ask(settings, [{ role: 'user', content: '这是连接测试，请只回复：OK' }], env).then(function (text) {
-      return { text: cleanReason(text.replace(/<think>[\s\S]*?<\/think>/gi, '')), ms: Date.now() - t0 };
+    if (settings.provider === 'jev') {
+      var request = {
+        model: settings.jev.model,
+        state: '这是一次连接测试。',
+        questions: { ping: { type: 'choice', instructions: '连接是否正常？', criteria: { ok: '连接正常', other: '其他情况' } } }
+      };
+      return guarded(settings, env, function (signal) { return askJev(settings, request, env, signal); }).then(function (data) {
+        var r = parseJev(data, 2, 'ping');
+        var text = r && r.key ? r.key + (r.confidence != null ? '（' + confidenceNote(r.confidence) + '）' : '') : JSON.stringify(data).slice(0, 60);
+        return { text: cleanReason(text), ms: Date.now() - t0, thinking: false };
+      });
+    }
+    return ask(settings, [{ role: 'user', content: '这是连接测试，请只回复：OK' }], env).then(function (r) {
+      return { text: cleanReason(r.text.replace(/<think>[\s\S]*?<\/think>/gi, '')), ms: Date.now() - t0, thinking: r.thinking };
     });
   }
 
   return {
     PROVIDERS: PROVIDERS,
     TIERS: TIERS,
-    DEFAULTS: DEFAULTS,
+    JEV_URL: JEV_URL,
+    JEV_MODEL: JEV_MODEL,
+    JEV_OPENROUTER_URL: JEV_OPENROUTER_URL,
+    JEV_OPENROUTER_MODEL: JEV_OPENROUTER_MODEL,
+    MARGIN: MARGIN,
+    MAX_CANDIDATES: MAX_CANDIDATES,
+    defaults: defaults,
     normalizeSettings: normalizeSettings,
     isReady: isReady,
-    endpointOf: endpointOf,
+    chatUrl: chatUrl,
+    jevUrl: jevUrl,
+    noThinkParams: noThinkParams,
+    candidates: candidates,
     boardText: boardText,
     buildMessages: buildMessages,
+    buildJevRequest: buildJevRequest,
     parseReply: parseReply,
+    parseJev: parseJev,
     ask: ask,
     decide: decide,
     ping: ping

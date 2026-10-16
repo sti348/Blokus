@@ -11,7 +11,7 @@
  *   GET  /api/rooms/:code/stream       SSE 推送房间状态（?token=）
  *   POST /api/rooms/:code/op           房间操作 { token, op }
  *   POST /api/rooms/:code/preview      当前玩家正在尝试的位置 { token, preview }（只转发，不保存）
- *   POST /api/llm                      大模型转发 { url, key, body }（默认关闭）
+ *   POST /api/llm                      大模型转发 { url, key, body }（默认关闭；只转发到 …/chat/completions 或 Jev 的 …/systemone、…/decisions）
  * 服务器用规则引擎校验每一步，并负责电脑玩家的回合；「大模型」电脑由房主的浏览器调用模型后落子。
  */
 'use strict';
@@ -165,8 +165,8 @@ async function llmProxy(req, res) {
   } catch (e) {
     return sendJson(res, 400, { error: { message: '接口地址无效' } });
   }
-  if (!/^https?:$/.test(target.protocol) || !/\/chat\/completions$/.test(target.pathname)) {
-    return sendJson(res, 400, { error: { message: '只能转发到 …/chat/completions' } });
+  if (!/^https?:$/.test(target.protocol) || !/\/(chat\/completions|systemone|decisions)$/.test(target.pathname)) {
+    return sendJson(res, 400, { error: { message: '只能转发到 …/chat/completions、…/systemone 或 …/decisions' } });
   }
   if (!body.body || typeof body.body !== 'object') return sendJson(res, 400, { error: { message: '缺少请求内容' } });
   if (llmActive >= LLM_MAX_ACTIVE) return sendJson(res, 429, { error: { message: '转发中的请求太多，请稍后再试' } });

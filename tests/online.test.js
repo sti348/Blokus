@@ -381,6 +381,11 @@ test('服务器：大模型电脑等房主落子，等太久由服务器代下�
   r = await post(base2, '/api/llm', { url: up, key: 'sk-proxy', body: { model: 'mm', messages: [{ role: 'user', content: 'hi' }] } });
   assert.equal(r.status, 200);
   assert.equal(r.body.choices[0].message.content, 'auth=Bearer sk-proxy model=mm path=/v1/chat/completions');
+  r = await post(base2, '/api/llm', { url: up.replace('/chat/completions', '/systemone'), key: 'ts', body: { model: 'jev-latest', questions: {} } });
+  assert.equal(r.status, 200);
+  assert.match(r.body.choices[0].message.content, /path=\/v1\/systemone/);
+  r = await post(base2, '/api/llm', { url: up.replace('/v1/chat/completions', '/api/alpha/decisions'), key: 'or', body: { model: 'x' } });
+  assert.equal(r.status, 200);
   r = await post(base2, '/api/llm', { url: up.replace('/chat/completions', '/models'), body: {} });
   assert.equal(r.status, 400);
   r = await post(base2, '/api/llm', { url: 'file:///etc/passwd', body: {} });

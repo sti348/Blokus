@@ -754,7 +754,8 @@
    * 没有合法落子时 move 为 null。被取消时 Promise 失败。
    */
   function llmChoose(st, signal) {
-    return claudeSample().then(function () {
+    // 先让出一帧，落子动画画完再开始算候选
+    return new Promise(function (r) { setTimeout(r, 20); }).then(claudeSample).then(function () {
       if (!llmReady()) return { move: null, error: 'setup', setup: true };
       return LLM.decide(st, llmSettings(), llmEnv(signal)).then(function (r) {
         if (r.asked) llm.lastError = '';
@@ -782,7 +783,7 @@
 
   function lastNote(st, p) {
     for (var i = st.actions.length - 1; i >= 0; i--) {
-      if (st.actions[i].player === p) return st.actions[i].note || '';
+      if (st.actions[i].player === p && st.actions[i].note) return st.actions[i].note;
     }
     return '';
   }
@@ -802,11 +803,36 @@
     return r ? r.value : 'openai';
   }
 
+  function copyEndpoint(ep) {
+    return { baseUrl: ep.baseUrl, apiKey: ep.apiKey, model: ep.model };
+  }
+
+  // 设置框里 OpenAI 兼容接口和 Jev 各自的填写，切换来源时互不覆盖
+  function showEndpoint(provider) {
+    var ep = llm.draft[provider];
+    $('llm-url').value = ep.baseUrl;
+    $('llm-key').value = ep.apiKey;
+    $('llm-model').value = ep.model;
+    $('llm-url').placeholder = provider === 'jev' ? LLM.JEV_URL : 'https://api.deepseek.com/v1';
+    $('llm-model').placeholder = provider === 'jev' ? LLM.JEV_MODEL : '例如 deepseek-chat、gpt-4o-mini、qwen-plus';
+    $('llm-key').placeholder = provider === 'jev' ? 'TypeSafe 或 OpenRouter 的密钥' : 'sk-…（本地模型可留空）';
+  }
+
+  function keepEndpoint(provider) {
+    if (provider === 'claude' || !llm.draft) return;
+    llm.draft[provider] = { baseUrl: $('llm-url').value, apiKey: $('llm-key').value, model: $('llm-model').value };
+  }
+
   function syncLlmProvider() {
-    var claude = llmProviderValue() === 'claude';
-    $('llm-openai').hidden = claude;
-    $('llm-claude').hidden = !claude;
-    $('llm-artifact-note').hidden = claude || !inClaudePage();
+    var p = llmProviderValue();
+    $('llm-endpoint').hidden = p === 'claude';
+    $('llm-claude').hidden = p !== 'claude';
+    $('llm-openai-note').hidden = p !== 'openai';
+    $('llm-jev-note').hidden = p !== 'jev';
+    $('llm-jev-presets').hidden = p !== 'jev';
+    $('llm-nothink-row').hidden = p !== 'openai';
+    $('llm-artifact-note').hidden = p === 'claude' || !inClaudePage();
+    if (p !== 'claude') showEndpoint(p);
   }
 
   function setLlmStatus(text, kind) {
@@ -816,26 +842,29 @@
   }
 
   function readLlmForm() {
+    var p = llmProviderValue();
+    keepEndpoint(p);
     return LLM.normalizeSettings({
-      provider: llmProviderValue(),
-      baseUrl: $('llm-url').value,
-      apiKey: $('llm-key').value,
-      model: $('llm-model').value,
+      provider: p,
+      openai: llm.draft.openai,
+      jev: llm.draft.jev,
       tier: $('llm-tier').value,
-      timeout: $('llm-timeout').value
+      timeout: $('llm-timeout').value,
+      noThink: $('llm-nothink').checked
     });
   }
 
   function openLlmDialog() {
     var s = llmSettings();
-    $('llm-provider-field').hidden = !inClaudePage();
+    llm.draft = { openai: copyEndpoint(s.openai), jev: copyEndpoint(s.jev) };
+    $('llm-provider-claude-label').hidden = !inClaudePage();
     $('llm-provider-claude').disabled = !llm.sample;
-    $('llm-provider-' + (s.provider === 'claude' && llm.sample ? 'claude' : 'openai')).checked = true;
-    $('llm-url').value = s.baseUrl;
-    $('llm-key').value = s.apiKey;
-    $('llm-model').value = s.model;
+    var p = s.provider === 'claude' && !llm.sample ? 'openai' : s.provider;
+    $('llm-provider-' + p).checked = true;
+    llm.dialogProvider = p;
     $('llm-tier').value = s.tier;
     $('llm-timeout').value = s.timeout;
+    $('llm-nothink').checked = s.noThink;
     setLlmStatus('', '');
     syncLlmProvider();
     openDialog('llm-dialog');
@@ -843,9 +872,9 @@
 
   function llmFormProblem(s) {
     if (s.provider === 'claude') return llm.sample ? '' : '这个页面现在用不了 Claude';
-    if (!s.baseUrl && !s.model) return '请填写接口地址和模型';
-    if (!/^https?:\/\/[^\s]+$/i.test(s.baseUrl)) return '接口地址要以 http:// 或 https:// 开头';
-    if (!s.model) return '请填写模型名';
+    var ep = s[s.provider];
+    if (!/^https?:\/\/[^\s]+$/i.test(ep.baseUrl)) return '接口地址要以 http:// 或 https:// 开头';
+    if (!ep.model) return '请填写模型名';
     return '';
   }
 
@@ -854,13 +883,27 @@
       b.addEventListener('click', function () { claudeSample().then(openLlmDialog); });
     });
     document.querySelectorAll('input[name="llm-provider"]').forEach(function (r) {
-      r.addEventListener('change', function () { syncLlmProvider(); setLlmStatus('', ''); });
+      r.addEventListener('change', function () {
+        keepEndpoint(llm.dialogProvider);
+        llm.dialogProvider = llmProviderValue();
+        syncLlmProvider();
+        setLlmStatus('', '');
+      });
     });
     $('llm-form').addEventListener('submit', function (e) { e.preventDefault(); });
+    function jevPreset(url, model) {
+      $('llm-url').value = url;
+      $('llm-model').value = model;
+      keepEndpoint('jev');
+      setLlmStatus('', '');
+    }
+    $('llm-jev-typesafe').addEventListener('click', function () { jevPreset(LLM.JEV_URL, LLM.JEV_MODEL); });
+    $('llm-jev-openrouter').addEventListener('click', function () { jevPreset(LLM.JEV_OPENROUTER_URL, LLM.JEV_OPENROUTER_MODEL); });
     $('llm-cancel').addEventListener('click', function () { closeDialog('llm-dialog'); });
     $('llm-save').addEventListener('click', function () {
       var s = readLlmForm();
-      var problem = s.provider === 'openai' && !s.baseUrl && !s.model ? '' : llmFormProblem(s);
+      var cleared = s.provider === 'openai' && !s.openai.baseUrl && !s.openai.model;
+      var problem = cleared ? '' : llmFormProblem(s);
       if (problem) { setLlmStatus(problem, 'err'); return; }
       llm.settings = s;
       llm.saved = true;
@@ -877,7 +920,8 @@
       btn.disabled = true;
       setLlmStatus('正在连接…', '');
       LLM.ping(s, llmEnv(null)).then(function (r) {
-        setLlmStatus('连接成功，用时 ' + (r.ms / 1000).toFixed(1) + ' 秒' + (r.text ? '。模型回复：' + r.text : ''), 'ok');
+        setLlmStatus('连接成功，用时 ' + (r.ms / 1000).toFixed(1) + ' 秒' + (r.text ? '。模型回复：' + r.text : '') +
+          (r.thinking ? '。注意：这个模型开着深度思考，每步会比较慢' : ''), r.thinking ? '' : 'ok');
       }, function (err) {
         setLlmStatus((err && err.message) || '连接失败', 'err');
       }).then(function () { btn.disabled = false; });
@@ -1111,6 +1155,7 @@
 
   function onTurnStart(first) {
     game.turnKey = turnKeyOf();
+    game.turnStart = Date.now();
     resetSelection();
     game.perPiece = null;
     game.anchors = null;
@@ -1154,13 +1199,15 @@
     cancelAI();
     if (game.paused || !isLocalAITurn()) return;
     var token = game.aiToken;
+    var delay = SPEED_MS[prefs.speed] || SPEED_MS.normal;
+    // 大模型马上开始问，模型的用时算进电脑速度里
+    if (cur().level === 'llm') {
+      runLocalLLM(token, delay);
+      return;
+    }
     game.aiTimer = setTimeout(function () {
       if (token !== game.aiToken || !isLocalAITurn()) return;
       var st = game.state;
-      if (cur().level === 'llm') {
-        runLocalLLM(token);
-        return;
-      }
       var move = AI.chooseMove(st, cur().level);
       if (!move) {
         Engine.applyAction(st, { type: 'resign' });
@@ -1168,15 +1215,18 @@
         return;
       }
       commitMove(move, true);
-    }, SPEED_MS[prefs.speed] || SPEED_MS.normal);
+    }, delay);
   }
 
   // 大模型替本地电脑选一步
-  function runLocalLLM(token) {
+  function runLocalLLM(token, minMs) {
     var ctl = new AbortController();
+    var t0 = Date.now();
     game.aiAbort = ctl;
     renderTurn();
     llmChoose(game.state, ctl.signal).then(function (r) {
+      return new Promise(function (resolve) { game.aiTimer = setTimeout(resolve, Math.max(0, minMs - (Date.now() - t0))); }).then(function () { return r; });
+    }).then(function (r) {
       if (token !== game.aiToken || !isLocalAITurn()) return;
       game.aiAbort = null;
       var move = r.move;
@@ -1338,7 +1388,8 @@
     var runner = Online.aiRunner(room, online.peers);
     var mine = runner === online.pid;
     if (online.net.serverRunsAI && !mine) return;
-    var delay = mine ? (SPEED_MS[room.speed] || SPEED_MS.normal) : (llmSeat ? 160000 : 12000) + Math.random() * 4000;
+    var speed = SPEED_MS[room.speed] || SPEED_MS.normal;
+    var delay = mine ? (llmSeat ? 0 : speed) : (llmSeat ? 160000 : 12000) + Math.random() * 4000;
     var session = online;
     function stale() {
       return online !== session || !game.state || game.state.over || game.state.actions.length !== at || cur().type !== 'ai';
@@ -1350,7 +1401,10 @@
         online.aiBusy = at;
         online.aiAbort = new AbortController();
         renderTurn();
-        ask = llmChoose(game.state, online.aiAbort.signal);
+        var t0 = Date.now();
+        ask = llmChoose(game.state, online.aiAbort.signal).then(function (r) {
+          return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, speed - (Date.now() - t0))); }).then(function () { return r; });
+        });
       } else {
         ask = Promise.resolve({ move: AI.chooseMove(game.state, llmSeat ? 'hard' : cur().level), note: '' });
       }
@@ -1816,7 +1870,11 @@
         text = '等待 ' + pl.name + '（' + pl.label + '方）落子' +
           (onlineMode && !isPeerOnline(pl.owner) ? ' · 已离线' : remotePreview() ? ' · 正在尝试摆放' : '');
       }
-      else text = pl.name + (game.paused ? ' · 已暂停' : pl.level === 'llm' ? ' 正在问大模型…' : ' 思考中…');
+      else if (game.paused) text = pl.name + ' · 已暂停';
+      else if (pl.level === 'llm') {
+        var secs = Math.floor((Date.now() - (game.turnStart || Date.now())) / 1000);
+        text = pl.name + ' 正在问大模型…' + (secs >= 2 ? ' ' + secs + ' 秒' : '');
+      } else text = pl.name + ' 思考中…';
     }
     root.style.setProperty('--turn', color);
     $('turn-text').textContent = text;
@@ -2784,6 +2842,12 @@
 
   readPalette();
   bindUI();
+  // 等大模型时每秒刷新一次用时
+  setInterval(function () {
+    if ($('game').hidden || !game.state || game.state.over || game.paused) return;
+    var pl = cur();
+    if (pl.type === 'ai' && pl.level === 'llm') renderTurn();
+  }, 1000);
   bindBoard();
   bindKeys();
   showScreen('setup');
