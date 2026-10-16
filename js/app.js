@@ -11,13 +11,14 @@
   var Net = BlokusNet;
   var EMPTY = Engine.EMPTY;
 
-  var MODE_LIST = ['classic', 'duo', 'trigon', 'cube'];
-  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块', cube: '立体' };
+  var MODE_LIST = ['classic', 'duo', 'trigon', 'cube', 'prism'];
+  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块', cube: '立体', prism: '三棱柱' };
   var MODE_NOTE = {
     classic: '21 块方块棋子，四人各从棋盘一角出发。',
     duo: '两人对战，从棋盘内侧的两个起点出发。',
     trigon: '22 块三角棋子，6 个公共起点；4 人用边长 9 的六边形棋盘，人少时棋盘相应缩小。',
-    cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。'
+    cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。',
+    prism: '三角格版的立体玩法：六边形地面由三角形组成，每格是一个三棱柱，棋子落下堆叠。自己的棋子不能面贴面，必须棱或角相接。每人 19 块三棱柱棋子（1–4 格）。'
   };
   var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难' };
   var SPEED_MS = { fast: 200, normal: 550, slow: 1100 };
@@ -252,7 +253,7 @@
 
   BoardView.prototype.cellAt = function (clientX, clientY, state) {
     var topo = state.topo;
-    if (topo.kind === 'cube') return View3D.pick(this, state, clientX, clientY);
+    if (topo.dims === 3) return View3D.pick(this, state, clientX, clientY);
     var r = this.canvas.getBoundingClientRect();
     if (clientX < r.left || clientY < r.top || clientX > r.right || clientY > r.bottom) return null;
     var L = this.layout(topo);
@@ -365,7 +366,7 @@
     if (!state || !this.css) return;
     var ov = this.getOverlay ? this.getOverlay() : {};
     now = now || performance.now();
-    if (state.topo.kind === 'cube') {
+    if (state.topo.dims === 3) {
       ov.dropMs = DROP_MS;
       ov.pulse = REDUCED_MOTION ? 1 : 0.55 + 0.45 * Math.sin(now / 220);
       View3D.draw(this, state, ov, palette, now);
@@ -544,7 +545,7 @@
     mode: 'classic',
     tab: 'local',
     nick: '',
-    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4), cube: defaultSeats(4) },
+    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4), cube: defaultSeats(4), prism: defaultSeats(4) },
     hints: true,
     sound: true,
     speed: 'normal'
@@ -588,6 +589,7 @@
     classic: FOUR_PRESETS,
     trigon: FOUR_PRESETS,
     cube: FOUR_PRESETS,
+    prism: FOUR_PRESETS,
     duo: [
       { label: '人机对战', types: ['human', 'ai'] },
       { label: '双人同屏', types: ['human', 'human'] },
@@ -708,7 +710,7 @@
   var demo = { view: null, state: null, timer: 0, anim: null, round: 0 };
 
   function demoNew() {
-    var mode = ['classic', 'trigon', 'cube'][demo.round++ % 3];
+    var mode = ['classic', 'trigon', 'cube', 'prism'][demo.round++ % 4];
     demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.map(function (s, i) { return { seat: i }; })));
     demo.anim = null;
     $('demo-label').textContent = '电脑演示局 · ' + MODE_LABEL[mode];
@@ -800,6 +802,7 @@
   function cellsToIdx(state, cells) {
     return cells.map(function (c) { return Engine.cellIndex(state.topo, c); });
   }
+  function is3D() { return !!game.state && game.state.topo.dims === 3; }
   function isCube() { return !!game.state && game.state.topo.kind === 'cube'; }
 
   function myPlayers() {
@@ -874,7 +877,7 @@
   }
 
   function setSlice(n) {
-    if (!game.view || !isCube()) return;
+    if (!game.view || !is3D()) return;
     var H = game.state.topo.height;
     n = clamp(Math.round(n), 1, H);
     game.view.slice = n >= H ? null : n;
@@ -884,7 +887,7 @@
   }
 
   function applyModeControls() {
-    var cube = isCube();
+    var cube = is3D();
     if (cube && game.view) {
       $('layer-range').max = game.state.topo.height;
       setSlice(game.state.topo.height);
@@ -892,12 +895,14 @@
     }
     $('cam-ctl').hidden = !cube;
     $('board-wrap').classList.toggle('cube', cube);
-    $('roll-btn').hidden = !cube;
+    $('roll-btn').hidden = !isCube();
     $('rot-ccw').title = cube ? '水平向左转（Shift+R）' : '逆时针旋转（E）';
     $('rot-cw').title = cube ? '水平向右转（R / 滚轮）' : '顺时针旋转（R / 右键 / 滚轮）';
-    $('flip-btn').title = cube ? '向前翻（F）' : '翻转（F）';
+    $('flip-btn').title = isCube() ? '向前翻（F）' : cube ? '上下翻转（F）' : '翻转（F）';
     $('keys-help').textContent = cube
-      ? '点选棋子，指向一列后点击让它落下 · R 水平转 · F 前翻 · G 侧翻 · Q / E 转视角 · X 透视 · [ ] 切层 · 拖动空白处旋转视角'
+      ? (isCube()
+        ? '点选棋子，指向一列后点击让它落下 · R 水平转 · F 前翻 · G 侧翻 · Q / E 转视角 · X 透视 · [ ] 切层 · 拖动空白处旋转视角'
+        : '点选棋子，指向一列后点击让它落下 · R 水平转 60° · F 上下翻转 · Q / E 转视角 · X 透视 · [ ] 切层 · 拖动空白处旋转视角')
       : '点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消';
   }
 
@@ -939,7 +944,7 @@
       var forb = Engine.forbiddenMask(st.board, st.topo, st.current);
       game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb);
       game.anchorDots = game.anchors.list;
-      if (st.topo.kind === 'cube') {
+      if (st.topo.dims === 3) {
         // 立体：只标出棋子落下后能停住的角点
         var hm = Engine.heightMap(st.board, st.topo);
         game.anchorDots = game.anchors.list.filter(function (i) {
@@ -1122,7 +1127,7 @@
 
   function currentOrient() {
     var set = game.state.set;
-    return set.kind === 'cube' ? game.sel.orient : set.orientFor(game.sel.piece, game.sel.rot, game.sel.flip);
+    return set.dims === 3 ? game.sel.orient : set.orientFor(game.sel.piece, game.sel.rot, game.sel.flip);
   }
 
   function clampGhost() {
@@ -1131,7 +1136,7 @@
     if (topo.kind === 'tri') return;
     var o = game.state.set.pieces[game.sel.piece].orients[currentOrient()];
     game.ghost.x = clamp(game.ghost.x, o.pivot[0], topo.cols - o.w + o.pivot[0]);
-    if (topo.kind === 'cube') game.ghost.z = clamp(game.ghost.z, o.pivot[2], topo.depth - o.d + o.pivot[2]);
+    if (topo.dims === 3) game.ghost.z = clamp(game.ghost.z, o.pivot[2], topo.depth - o.d + o.pivot[2]);
     else game.ghost.y = clamp(game.ghost.y, o.pivot[1], topo.rows - o.h + o.pivot[1]);
   }
 
@@ -1139,9 +1144,21 @@
     if (game.sel.piece < 0 || !game.ghost) return null;
     var oi = currentOrient();
     var o = game.state.set.pieces[game.sel.piece].orients[oi];
-    if (isCube()) {
+    if (is3D()) {
       // 立体：对准的是一列，高度由重力决定
-      var px = game.ghost.x - o.pivot[0], pz = game.ghost.z - o.pivot[2];
+      var pv3 = o.pivot, gx3 = game.ghost.x, gz3 = game.ghost.z;
+      // 三棱柱：光标所在列与对准格的三角形朝向必须一致，否则换一个朝向相同的格子对准
+      if (game.state.topo.parity && ((gx3 + gz3 + pv3[0] + pv3[2]) & 1)) {
+        var best3 = null, bd3 = Infinity;
+        o.cells.forEach(function (c) {
+          if ((gx3 + gz3 + c[0] + c[2]) & 1) return;
+          var d = (c[0] - pv3[0]) * (c[0] - pv3[0]) + (c[2] - pv3[2]) * (c[2] - pv3[2]) + c[1] * c[1] * 4;
+          if (d < bd3) { bd3 = d; best3 = c; }
+        });
+        if (!best3) { gx3 += 1; best3 = pv3; }
+        pv3 = best3;
+      }
+      var px = gx3 - pv3[0], pz = gz3 - pv3[2];
       var y = Engine.dropY(game.state, game.sel.piece, oi, px, pz, true);
       if (y < 0) return null;
       return { piece: game.sel.piece, orient: oi, x: px, y: y, z: pz };
@@ -1170,7 +1187,7 @@
     list.forEach(function (i) {
       if (topo.centerDist[i] < bd) { bd = topo.centerDist[i]; best = i; }
     });
-    if (topo.kind === 'cube') {
+    if (topo.dims === 3) {
       var c = View3D.coordOf(topo, best);
       return { x: c[0], z: c[2] };
     }
@@ -1199,7 +1216,7 @@
     var st = game.state;
     var ov = { lastMove: st.lastMove ? cellsToIdx(st, st.lastMove.cells) : null, anim: game.anim };
     var topo = st.topo;
-    var cube = topo.kind === 'cube';
+    var cube = topo.dims === 3;
     if (cube && game.view) {
       ov.slice = game.view.slice;
       ov.xray = game.view.xray;
@@ -1254,13 +1271,40 @@
       game.hint = null;
       game.hintLockCell = null;
       game.ghostByTap = false;
-      if (!game.ghost) game.ghost = defaultGhost();
+      if (!game.ghost) {
+        game.ghost = defaultGhost();
+        if (prefs.hints) snapGhostToLegal();
+      }
       clampGhost();
       // 让方向键 / 回车直接作用于棋盘
       try { $('board').focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
     }
     renderDock();
     drawBoard();
+  }
+
+  // 自动摆出的预览：挪到当前朝向下离它最近的合法位置（手机上选好棋子就能直接放）
+  function snapGhostToLegal() {
+    var st = game.state, pi = game.sel.piece, oi = currentOrient();
+    var filter = st.set.pieces.map(function (p, i) { return i === pi; });
+    var all = Engine.legalMoves(st, st.current, filter);
+    if (!all.length || !game.ghost) return;
+    // 当前朝向放得下就保持朝向，否则换成放得下的朝向
+    var same = all.filter(function (m) { return m.orient === oi; });
+    var moves = same.length ? same : all;
+    var d3 = st.topo.dims === 3, orients = st.set.pieces[pi].orients;
+    var tx = game.ghost.x, ty = d3 ? game.ghost.z : game.ghost.y;
+    var best = null, bd = Infinity;
+    moves.forEach(function (m) {
+      var pv = orients[m.orient].pivot;
+      var gx = m.x + pv[0], gy = d3 ? m.z + pv[2] : m.y + pv[1];
+      var d = (gx - tx) * (gx - tx) + (gy - ty) * (gy - ty);
+      if (d < bd) { bd = d; best = m; }
+    });
+    var o = orients[best.orient];
+    if (d3) game.sel.orient = best.orient;
+    else { game.sel.rot = o.rot; game.sel.flip = o.flip; }
+    game.ghost = d3 ? { x: best.x + o.pivot[0], z: best.z + o.pivot[2] } : { x: best.x + o.pivot[0], y: best.y + o.pivot[1] };
   }
 
   function afterTurnPiece() {
@@ -1273,7 +1317,7 @@
   function rotate(d) {
     if (game.sel.piece < 0 || !canAct()) return;
     var set = game.state.set;
-    if (set.kind === 'cube') {
+    if (set.dims === 3) {
       game.sel.orient = set.turn(game.sel.piece, game.sel.orient, 1, d);
     } else {
       var R = set.rotations;
@@ -1286,7 +1330,7 @@
   function flip() {
     if (game.sel.piece < 0 || !canAct()) return;
     var set = game.state.set;
-    if (set.kind === 'cube') {
+    if (set.dims === 3) {
       game.sel.orient = set.turn(game.sel.piece, game.sel.orient, View3D.screenAxes(game.view).tip, 1);
     } else {
       var R = set.rotations;
@@ -1304,7 +1348,7 @@
   }
 
   function reasonText(reason) {
-    if (isCube()) {
+    if (is3D()) {
       if (reason === 'edge') return '不能和自己的棋子面贴面（包括叠在自己的棋子正上方）';
       if (reason === 'corner') return '必须和自己的棋子棱或角相接';
       if (reason === 'start') return '第一块必须盖住地面上你的起始角';
@@ -1340,7 +1384,7 @@
     if (!move) return;
     var piece = game.state.set.pieces[move.piece];
     var o = piece.orients[move.orient];
-    if (game.state.set.kind === 'cube') {
+    if (game.state.set.dims === 3) {
       game.sel = { piece: move.piece, rot: 0, flip: 0, orient: move.orient };
       game.ghost = { x: move.x + o.pivot[0], z: move.z + o.pivot[2] };
     } else {
@@ -1434,7 +1478,7 @@
       if (demo.view && !$('setup').hidden) {
         if (demo.anim && now - demo.anim.t0 >= DROP_MS) demo.anim = null;
         // 立体演示局缓慢环绕
-        if (demo.state && demo.state.topo.kind === 'cube' && !REDUCED_MOTION && !document.hidden) {
+        if (demo.state && demo.state.topo.dims === 3 && !REDUCED_MOTION && !document.hidden) {
           demo.view.cam = demo.view.cam || { yaw: View3D.DEFAULT_CAM.yaw, pitch: View3D.DEFAULT_CAM.pitch };
           demo.view.cam.yaw += 0.004;
           more = true;
@@ -1545,7 +1589,7 @@
     var key = set.kind + ':' + pi;
     if (!miniCache[key]) {
       var piece = set.pieces[pi];
-      miniCache[key] = set.kind === 'cube' ? View3D.pieceSVG(piece.orients[piece.display], null, 4.2) : pieceSVG(piece.orients[piece.display], set.maxBox);
+      miniCache[key] = set.dims === 3 ? View3D.pieceSVG(piece.orients[piece.display], null, null, set.kind) : pieceSVG(piece.orients[piece.display], set.maxBox);
     }
     return miniCache[key];
   }
@@ -1607,7 +1651,7 @@
       b.dataset.piece = pi;
       b.setAttribute('role', 'option');
       b.setAttribute('aria-label', piece.name + '，' + piece.size + ' 格');
-      b.innerHTML = set.kind === 'cube' ? View3D.pieceSVG(piece.orients[piece.display], null, 4.2) : pieceSVG(piece.orients[piece.display], set.maxBox);
+      b.innerHTML = set.dims === 3 ? View3D.pieceSVG(piece.orients[piece.display], null, null, set.kind) : pieceSVG(piece.orients[piece.display], set.maxBox);
       b.addEventListener('click', function () { selectPiece(pi); });
       tray.appendChild(b);
     });
@@ -1660,7 +1704,7 @@
     if (has) {
       var set = game.state.set;
       var o = set.pieces[game.sel.piece].orients[currentOrient()];
-      prev.innerHTML = set.kind === 'cube' ? View3D.pieceSVG(o, game.view && game.view.cam, 4.2) : pieceSVG(o, set.maxBox);
+      prev.innerHTML = set.dims === 3 ? View3D.pieceSVG(o, game.view && game.view.cam, null, set.kind) : pieceSVG(o, set.maxBox);
       prev.setAttribute('aria-label', '已选：' + set.pieces[game.sel.piece].name);
     } else {
       prev.textContent = active ? '从下方选择棋子' : game.state.over ? '对局结束' : '等待其他玩家';
@@ -2128,7 +2172,7 @@
     canvas.addEventListener('pointerdown', function (e) {
       if (!game.state) return;
       // 立体：右键拖动、Shift+拖动，或没选棋子时拖动 = 旋转视角
-      if (isCube() && (e.button === 2 || (e.button === 0 && (e.shiftKey || game.sel.piece < 0 || !canAct())))) {
+      if (is3D() && (e.button === 2 || (e.button === 0 && (e.shiftKey || game.sel.piece < 0 || !canAct())))) {
         e.preventDefault();
         var cam = game.view.cam || (game.view.cam = { yaw: View3D.DEFAULT_CAM.yaw, pitch: View3D.DEFAULT_CAM.pitch });
         orbit = { x: e.clientX, y: e.clientY, yaw: cam.yaw, pitch: cam.pitch, button: e.button, shift: e.shiftKey, moved: false };
@@ -2200,8 +2244,8 @@
     var topo = game.state.topo;
     if (!game.ghost) {
       game.ghost = defaultGhost();
-    } else if (topo.kind === 'cube') {
-      var s = View3D.screenStep(game.view, dir);
+    } else if (topo.dims === 3) {
+      var s = View3D.screenStep(game.view, dir, topo.kind);
       game.ghost = { x: game.ghost.x + s[0], z: game.ghost.z + s[1] };
     } else {
       var tri = topo.kind === 'tri';
@@ -2227,7 +2271,7 @@
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      var cube = isCube();
+      var cube = is3D();
       var k = key.length === 1 ? key.toLowerCase() : key;
       if (k === 'r') { rotate(e.shiftKey ? -1 : 1); return; }
       if (k === 'f') { flip(); return; }

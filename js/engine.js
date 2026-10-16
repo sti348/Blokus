@@ -56,6 +56,14 @@
       sizeFor: { 2: 5, 3: 6, 4: 7 },
       height: 5,
       seats: FOUR
+    },
+    // 三棱柱：六边形三角格地面，一格是一个三棱柱，同样受重力堆叠；各自从六边形的一个角出发
+    prism: {
+      name: '三棱柱',
+      shape: 'prism',
+      sizeFor: { 2: 3, 3: 3, 4: 4 },
+      heightFor: { 2: 5, 3: 6, 4: 4 },
+      seats: FOUR
     }
   };
 
@@ -227,6 +235,8 @@
         }
       }
     }
+    var colValid = new Uint8Array(W * D);
+    colValid.fill(1);
     return {
       kind: 'cube',
       dims: 3,
@@ -239,6 +249,7 @@
       n: total,
       size: n,
       valid: valid,
+      colValid: colValid,
       cells: cells,
       edges: edges,
       corners: corners,
@@ -247,14 +258,90 @@
     };
   }
 
+  // 三棱柱棋盘：在六边形三角格上叠 height 层。共享三角面或矩形面 = 面相邻；只共享棱或顶点 = 角相邻
+  function prismTopology(side, height) {
+    var t2 = triTopology(side);
+    var W = t2.cols, D = t2.rows, H = height, layer = W * D, n = layer * H;
+    var valid = new Uint8Array(n), cells = [], vmap = {}, verts = new Array(n);
+    var x, y, z, i;
+    for (y = 0; y < H; y++) {
+      for (z = 0; z < D; z++) {
+        for (x = 0; x < W; x++) {
+          if (!t2.valid[x + W * z]) continue;
+          i = x + W * (z + D * y);
+          valid[i] = 1;
+          cells.push(i);
+          var vs = [];
+          Pieces.triVerts(x, z).forEach(function (v) { vs.push(v[0] + ',' + v[1] + ',' + y, v[0] + ',' + v[1] + ',' + (y + 1)); });
+          verts[i] = vs;
+          vs.forEach(function (k) { (vmap[k] || (vmap[k] = [])).push(i); });
+        }
+      }
+    }
+    var edges = new Array(n), corners = new Array(n), centerDist = new Float64Array(n);
+    cells.forEach(function (c) {
+      var shared = {};
+      verts[c].forEach(function (k) { vmap[k].forEach(function (j) { if (j !== c) shared[j] = (shared[j] || 0) + 1; }); });
+      edges[c] = [];
+      corners[c] = [];
+      Object.keys(shared).forEach(function (j) { (shared[j] >= 3 ? edges[c] : corners[c]).push(+j); });
+      edges[c].sort(function (a, b) { return a - b; });
+      corners[c].sort(function (a, b) { return a - b; });
+      centerDist[c] = t2.centerDist[c % layer];
+    });
+    // 每人从六边形的一个角出发：左上、右上、右下、左下
+    var cx = t2.center[0], cz = t2.center[1], hh = Pieces.H;
+    var seatStarts = [[-0.5, -1], [0.5, -1], [0.5, 1], [-0.5, 1]].map(function (d) {
+      var px = cx + d[0] * side, pz = cz + d[1] * side * hh;
+      var best = -1, bd = Infinity;
+      t2.cells.forEach(function (c) {
+        var dx = t2.centroids[c * 2] - px, dz = t2.centroids[c * 2 + 1] - pz;
+        var dd = dx * dx + dz * dz;
+        if (dd < bd - 1e-9) { bd = dd; best = c; }
+      });
+      return [best % W, 0, Math.floor(best / W)];
+    });
+    return {
+      kind: 'prism',
+      dims: 3,
+      gravity: true,
+      parity: true,
+      cols: W,
+      depth: D,
+      height: H,
+      rows: H,
+      n: n,
+      size: side,
+      valid: valid,
+      colValid: t2.valid,
+      cells: cells,
+      edges: edges,
+      corners: corners,
+      centerDist: centerDist,
+      seatStarts: seatStarts,
+      tri: t2
+    };
+  }
+
   var topoCache = {};
-  function topologyFor(mode, size) {
+  // height 只对立体类棋盘有意义；不给时用该模式的默认高度
+  function topologyFor(mode, size, height) {
     var m = isMode(mode) ? MODES[mode] : MODES.classic;
-    var key = m.shape + ':' + size;
+    var h = Number.isInteger(height) && height >= 1 && height <= 12 ? height : m.height || (m.heightFor && m.heightFor[4]);
+    var key = m.shape + ':' + size + (m.shape === 'cube' || m.shape === 'prism' ? ':' + h : '');
     if (!topoCache[key]) {
-      topoCache[key] = m.shape === 'tri' ? triTopology(size) : m.shape === 'cube' ? cubeTopology(size, m.height) : squareTopology(size);
+      topoCache[key] = m.shape === 'tri' ? triTopology(size)
+        : m.shape === 'cube' ? cubeTopology(size, h)
+        : m.shape === 'prism' ? prismTopology(size, h)
+        : squareTopology(size);
     }
     return topoCache[key];
+  }
+
+  function heightFor(mode, playerCount) {
+    var m = MODES[mode];
+    if (m.heightFor) return m.heightFor[Math.max(2, Math.min(4, playerCount))];
+    return m.height;
   }
 
   function cellIndex(topo, c) {
@@ -263,7 +350,8 @@
 
   function inBounds(topo, c) {
     if (topo.dims === 3) {
-      return c[0] >= 0 && c[1] >= 0 && c[2] >= 0 && c[0] < topo.cols && c[1] < topo.height && c[2] < topo.depth;
+      return c[0] >= 0 && c[1] >= 0 && c[2] >= 0 && c[0] < topo.cols && c[1] < topo.height && c[2] < topo.depth &&
+        topo.valid[c[0] + topo.cols * (c[2] + topo.depth * c[1])] === 1;
     }
     return c[0] >= 0 && c[1] >= 0 && c[0] < topo.cols && c[1] < topo.rows && topo.valid[c[1] * topo.cols + c[0]] === 1;
   }
@@ -283,8 +371,9 @@
   function buildConfig(mode, entries) {
     var m = MODES[mode];
     var size = sizeFor(mode, entries.length);
-    var topo = topologyFor(mode, size);
-    return {
+    var height = heightFor(mode, entries.length);
+    var topo = topologyFor(mode, size, height);
+    var cfg = {
       mode: mode,
       size: size,
       players: entries.map(function (e) {
@@ -299,6 +388,8 @@
         return p;
       })
     };
+    if (height) cfg.height = height;
+    return cfg;
   }
 
   /* ================= 对局状态 ================= */
@@ -309,7 +400,7 @@
    */
   function createGame(config) {
     var mode = isMode(config.mode) ? config.mode : 'classic';
-    var topo = topologyFor(mode, config.size);
+    var topo = topologyFor(mode, config.size, config.height);
     var set = setFor(mode);
     var board = new Int8Array(topo.n);
     for (var i = 0; i < topo.n; i++) board[i] = topo.valid[i] ? EMPTY : BLOCKED;
@@ -380,6 +471,7 @@
     var topo = state.topo;
     var o = state.set.pieces[pieceIndex].orients[orient];
     if (x < 0 || z < 0 || x + o.w > topo.cols || z + o.d > topo.depth) return -1;
+    if (topo.parity && ((x + z) & 1)) return -1;
     hm = hm || heightMap(state.board, topo);
     var y = 0, foot = o.foot;
     for (var k = 0; k < foot.length; k += 3) {
@@ -403,6 +495,8 @@
         var o = orients[oi], flat = o.flat, foot = o.foot, len = flat.length;
         for (var z = 0; z + o.d <= D; z++) {
           for (var x = 0; x + o.w <= W; x++) {
+            // 三棱柱：平移须保持三角形朝向
+            if (topo.parity && ((x + z) & 1)) continue;
             var y = 0, k;
             for (k = 0; k < foot.length; k += 3) {
               var need = hm[(z + foot[k + 1]) * W + x + foot[k]] - foot[k + 2];
@@ -552,14 +646,15 @@
     if (!player || player.done || !piece || !player.remaining[pieceIndex] || !piece.orients[orient]) return 'used';
     var topo = state.topo, board = state.board;
     if (!Number.isInteger(x) || !Number.isInteger(y) || (topo.dims === 3 && !Number.isInteger(z))) return 'bounds';
-    if (topo.parity && ((x + y) & 1)) return 'bounds';
+    if (topo.parity && ((topo.dims === 3 ? x + z : x + y) & 1)) return 'bounds';
     var cells = placementCells(state, pieceIndex, orient, x, y, z);
     var idx = [];
     var i, k;
     for (i = 0; i < cells.length; i++) {
       if (!inBounds(topo, cells[i])) {
         var c3 = cells[i];
-        if (topo.dims === 3 && c3[1] >= topo.height && c3[0] >= 0 && c3[2] >= 0 && c3[0] < topo.cols && c3[2] < topo.depth) return 'ceiling';
+        if (topo.dims === 3 && c3[1] >= topo.height && c3[0] >= 0 && c3[2] >= 0 && c3[0] < topo.cols && c3[2] < topo.depth &&
+          topo.colValid[c3[0] + topo.cols * c3[2]]) return 'ceiling';
         return 'bounds';
       }
       idx.push(cellIndex(topo, cells[i]));
@@ -700,6 +795,7 @@
     dropY: dropY,
     setFor: setFor,
     sizeFor: sizeFor,
+    heightFor: heightFor,
     buildConfig: buildConfig,
     createGame: createGame,
     placementCells: placementCells,

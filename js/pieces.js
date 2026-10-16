@@ -506,11 +506,161 @@
     };
   }
 
+  /* ---------------- 三棱柱（三棱柱模式） ---------------- */
+
+  // 坐标 [x, y, z]：(x, z) 是三角格坐标（x + z 为偶数时尖朝 -z），y 是层。
+  // 允许的转动：绕竖轴每次 60°，以及上下翻转（共 12 种），不允许镜像。
+  function prismNormalize(cells) {
+    var minX = Infinity, minY = Infinity, minZ = Infinity;
+    cells.forEach(function (c) {
+      if (c[0] < minX) minX = c[0];
+      if (c[1] < minY) minY = c[1];
+      if (c[2] < minZ) minZ = c[2];
+    });
+    var dx = -minX, dz = -minZ;
+    if ((dx + dz) & 1) dx += 1;
+    return cells.map(function (c) { return [c[0] + dx, c[1] - minY, c[2] + dz]; })
+      .sort(function (a, b) { return a[1] - b[1] || a[2] - b[2] || a[0] - b[0]; });
+  }
+
+  function prismTransform(c, rot, upside) {
+    var t = TRI.transformCell([c[0], c[2]], rot, upside ? 1 : 0);
+    return [t[0], upside ? -c[1] : c[1], t[1]];
+  }
+
+  function prismCanonical(cells) {
+    var best = null;
+    for (var u = 0; u < 2; u++) {
+      for (var r = 0; r < 6; r++) {
+        var k = cubeKey(prismNormalize(cells.map(function (c) { return prismTransform(c, r, u); })));
+        if (best === null || k < best) best = k;
+      }
+    }
+    return best;
+  }
+
+  function prismNeighbors(c) {
+    var t = triNeighbors(c[0], c[2]);
+    return [[t[0][0], c[1], t[0][1]], [t[1][0], c[1], t[1][1]], [t[2][0], c[1], t[2][1]], [c[0], c[1] + 1, c[2]], [c[0], c[1] - 1, c[2]]];
+  }
+
+  function enumeratePolyprisms(maxSize) {
+    var levels = [[cubeKey([[0, 0, 0]])]];
+    for (var size = 2; size <= maxSize; size++) {
+      var seen = {}, next = [];
+      levels[levels.length - 1].forEach(function (k) {
+        var cells = k.split(';').map(function (s) { return s.split(',').map(Number); });
+        var has = {};
+        cells.forEach(function (c) { has[c.join(',')] = 1; });
+        cells.forEach(function (c) {
+          prismNeighbors(c).forEach(function (nb) {
+            if (has[nb.join(',')]) return;
+            var ck = prismCanonical(cells.concat([nb]));
+            if (!seen[ck]) { seen[ck] = 1; next.push(ck); }
+          });
+        });
+      });
+      next.sort();
+      levels.push(next);
+    }
+    return levels;
+  }
+
+  function prismName(cells, letter) {
+    var n = cells.length;
+    var flat = cells.every(function (c) { return c[1] === cells[0][1]; });
+    var column = cells.every(function (c) { return c[0] === cells[0][0] && c[2] === cells[0][2]; });
+    if (n === 1) return '单柱';
+    if (column) return (n === 2 ? '双' : n === 3 ? '三' : '四') + '层柱';
+    if (flat) {
+      var tn = triPieceName(cells.map(function (c) { return [c[0], c[2]]; }), n, 0);
+      return / [A-L]$/.test(tn) ? '四格弯条' : tn;
+    }
+    return (n === 3 ? '三块' : '四块') + ' ' + 'ABCDEFGHIJKL'.charAt(letter);
+  }
+
+  function buildPrismSet() {
+    var raws = [];
+    enumeratePolyprisms(4).forEach(function (level) {
+      level.forEach(function (k) { raws.push(k.split(';').map(function (s) { return s.split(',').map(Number); })); });
+    });
+    var letters = {};
+    var pieces = raws.map(function (rawCells, index) {
+      var orients = [], byKey = {};
+      function orientOf(cells) {
+        var norm = prismNormalize(cells);
+        var key = cubeKey(norm);
+        if (key in byKey) return byKey[key];
+        byKey[key] = orients.length;
+        var w = 0, h = 0, d = 0, flat = [], foot = {};
+        norm.forEach(function (c) {
+          w = Math.max(w, c[0] + 1); h = Math.max(h, c[1] + 1); d = Math.max(d, c[2] + 1);
+          flat.push(c[0], c[1], c[2]);
+          var fk = c[0] + ',' + c[2];
+          if (!(fk in foot) || c[1] < foot[fk]) foot[fk] = c[1];
+        });
+        var footList = [];
+        Object.keys(foot).forEach(function (fk) {
+          var p = fk.split(',').map(Number);
+          footList.push(p[0], p[1], foot[fk]);
+        });
+        // 对准格：最底层里最靠近整体中心的那一格
+        var cs = norm.map(function (c) { return TRI.centroid(c[0], c[2]); });
+        var mx = 0, mz = 0;
+        cs.forEach(function (p) { mx += p[0]; mz += p[1]; });
+        mx /= cs.length;
+        mz /= cs.length;
+        var pivot = null, bd = Infinity;
+        norm.forEach(function (c, i) {
+          if (c[1] !== 0) return;
+          var dd = (cs[i][0] - mx) * (cs[i][0] - mx) + (cs[i][1] - mz) * (cs[i][1] - mz);
+          if (dd < bd - 1e-9) { bd = dd; pivot = c; }
+        });
+        orients.push({ cells: norm, flat: flat, foot: footList, w: w, h: h, d: d, pivot: pivot, key: key });
+        return byKey[key];
+      }
+      for (var u = 0; u < 2; u++) {
+        for (var r = 0; r < 6; r++) orientOf(rawCells.map(function (c) { return prismTransform(c, r, u); }));
+      }
+      // 转动表与方块一致：轴 1 = 绕竖轴（±60°），轴 0 / 2 = 上下翻转
+      orients.forEach(function (o) {
+        var plus = orientOf(o.cells.map(function (c) { return prismTransform(c, 1, 0); }));
+        var minus = orientOf(o.cells.map(function (c) { return prismTransform(c, 5, 0); }));
+        var upside = orientOf(o.cells.map(function (c) { return prismTransform(c, 0, 1); }));
+        o.turns = [upside, upside, plus, minus, upside, upside];
+      });
+      var display = 0;
+      orients.forEach(function (o, i) {
+        var b = orients[display];
+        if (o.h < b.h || (o.h === b.h && o.w > b.w) || (o.h === b.h && o.w === b.w && o.d < b.d)) display = i;
+      });
+      var n = rawCells.length;
+      letters[n] = letters[n] || 0;
+      var name = prismName(rawCells, letters[n]);
+      if (/ [A-L]$/.test(name)) letters[n]++;
+      return { index: index, id: 'P' + n + String.fromCharCode(97 + index), name: name, size: n, orients: orients, display: display };
+    });
+    return {
+      kind: 'prism',
+      dims: 3,
+      rotations: 12,
+      pieces: pieces,
+      count: pieces.length,
+      total: pieces.reduce(function (s, p) { return s + p.size; }, 0),
+      maxBox: 4,
+      turn: function (pieceIndex, orient, axis, dir) {
+        return pieces[pieceIndex].orients[orient].turns[axis * 2 + (dir > 0 ? 0 : 1)];
+      }
+    };
+  }
+
   var SETS = {
     square: buildSet(SQUARE, SQUARE_RAW),
     tri: buildSet(TRI, triRaws),
-    cube: buildCubeSet()
+    cube: buildCubeSet(),
+    prism: buildPrismSet()
   };
+  SETS.cube.dims = 3;
 
   return {
     SETS: SETS,

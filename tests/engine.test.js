@@ -92,7 +92,7 @@ test('三角块：22 块棋子共 110 格，155 种朝向', () => {
 });
 
 test('旋转 / 翻转映射覆盖每个朝向', () => {
-  for (const set of Object.values(Pieces.SETS)) {
+  for (const set of [Pieces.SETS.square, Pieces.SETS.tri]) {
     set.pieces.forEach((p, pi) => {
       const seen = new Set();
       for (let flip = 0; flip < 2; flip++) {
@@ -156,7 +156,7 @@ test('同色只能角接、不能边接；异色可以边接', () => {
 });
 
 test('走法生成与暴力枚举完全一致（无重复、无遗漏）', () => {
-  for (const [mode, count, seed, rounds] of [['classic', 4, 1, 6], ['classic', 3, 2, 5], ['duo', 2, 3, 5], ['trigon', 4, 4, 6], ['trigon', 2, 5, 4], ['cube', 4, 6, 9], ['cube', 2, 7, 6]]) {
+  for (const [mode, count, seed, rounds] of [['classic', 4, 1, 6], ['classic', 3, 2, 5], ['duo', 2, 3, 5], ['trigon', 4, 4, 6], ['trigon', 2, 5, 4], ['cube', 4, 6, 9], ['cube', 2, 7, 6], ['prism', 4, 8, 9], ['prism', 3, 9, 6]]) {
     const rng = seeded(seed);
     const state = Engine.createGame(config(mode, count));
     for (let round = 0; round < rounds && !state.over; round++) {
@@ -170,7 +170,7 @@ test('走法生成与暴力枚举完全一致（无重复、无遗漏）', () =>
 });
 
 test('随机对局能正常结束，重放结果一致', () => {
-  for (const [mode, count, seed] of [['classic', 4, 11], ['classic', 2, 12], ['duo', 2, 13], ['trigon', 4, 14], ['trigon', 3, 15], ['cube', 4, 16], ['cube', 2, 17]]) {
+  for (const [mode, count, seed] of [['classic', 4, 11], ['classic', 2, 12], ['duo', 2, 13], ['trigon', 4, 14], ['trigon', 3, 15], ['cube', 4, 16], ['cube', 2, 17], ['prism', 4, 18], ['prism', 2, 19]]) {
     const cfg = config(mode, count);
     const state = Engine.createGame(cfg);
     playRandomly(state, seeded(seed), 2000);
@@ -238,6 +238,53 @@ test('立体：棋子竖直落下，不能悬空、不能超过限高、不能�
   assert.equal(Engine.checkPlacement(tower, 0, ii, tall, 3, 4, 3), 'ceiling');
 });
 
+test('三棱柱：19 块棋子共 66 格，118 种朝向；面相邻 5 个，转动可达全部朝向', () => {
+  const set = Pieces.SETS.prism;
+  assert.equal(set.count, 19);
+  assert.equal(set.total, 66);
+  assert.deepEqual([1, 2, 3, 4].map((n) => set.pieces.filter((p) => p.size === n).length), [1, 2, 3, 13]);
+  assert.equal(set.pieces.reduce((s, p) => s + p.orients.length, 0), 118);
+  set.pieces.forEach((p, pi) => {
+    const seen = new Set([p.display]);
+    const queue = [p.display];
+    while (queue.length) {
+      const o = queue.pop();
+      for (const [a, d] of [[1, 1], [1, -1], [0, 1]]) {
+        const n = set.turn(pi, o, a, d);
+        if (!seen.has(n)) { seen.add(n); queue.push(n); }
+      }
+    }
+    assert.equal(seen.size, p.orients.length, p.name);
+  });
+  const topo = Engine.topologyFor('prism', 4, 4);
+  assert.equal(topo.cells.length, 96 * 4);
+  assert.equal(config('prism', 3).height, 6);
+  assert.equal(config('prism', 3).size, 3);
+  topo.cells.forEach((c) => assert.ok(topo.edges[c].length <= 5 && topo.corners[c].length <= 33));
+  assert.ok(topo.cells.some((c) => topo.edges[c].length === 5 && topo.corners[c].length === 33));
+  // 四个起点在六边形的四个角，各不相同
+  assert.equal(new Set(topo.seatStarts.map((s) => s.join())).size, 4);
+});
+
+test('三棱柱：落子须保持三角形朝向，不能叠在自己正上方', () => {
+  const state = Engine.createGame(config('prism'));
+  const [sx, , sz] = state.players[0].starts[0];
+  const mono = 0;
+  const oi = state.set.pieces[mono].orients.findIndex((o) => ((o.cells[0][0] + o.cells[0][2]) & 1) === ((sx + sz) & 1));
+  const o = state.set.pieces[mono].orients[oi].cells[0];
+  const x = sx - o[0], z = sz - o[2];
+  assert.equal(Engine.checkPlacement(state, 0, mono, oi, x + 1, 0, z), 'bounds');
+  assert.equal(Engine.applyAction(state, { type: 'place', piece: mono, orient: oi, x, y: 0, z }), null);
+  for (let k = 0; k < 3; k++) Engine.applyAction(state, { type: 'resign' });
+  assert.equal(state.current, 0);
+  // 双层柱叠在自己的单柱正上方：三角面相贴
+  const col = state.set.pieces.findIndex((p) => p.name === '双层柱');
+  const coi = state.set.pieces[col].orients.findIndex((o) => ((o.cells[0][0] + o.cells[0][2]) & 1) === ((sx + sz) & 1));
+  const c0 = state.set.pieces[col].orients[coi].cells[0];
+  assert.equal(Engine.dropY(state, col, coi, sx - c0[0], sz - c0[2]), 1);
+  assert.equal(Engine.checkPlacement(state, 0, col, coi, sx - c0[0], 1, sz - c0[2]), 'edge');
+});
+
 test('旧存档（start 字段、无 mode）仍可读取', () => {
   const legacy = { size: 20, players: Engine.MODES.classic.seats.map((s) => ({ color: s.color, start: s.start })) };
   const state = Engine.createGame(legacy);
@@ -266,7 +313,7 @@ test('排名并列时名次相同', () => {
 });
 
 test('三档电脑在两种棋盘上都只走合法棋步', () => {
-  for (const mode of ['classic', 'trigon', 'cube']) {
+  for (const mode of ['classic', 'trigon', 'cube', 'prism']) {
     for (const level of ['easy', 'normal', 'hard']) {
       const state = Engine.createGame(config(mode));
       const rng = seeded(level.length + mode.length);
