@@ -310,9 +310,206 @@
     });
   });
 
+  /* ---------------- 立方体（立体模式） ---------------- */
+
+  // 坐标 [x, y, z]，y 朝上。只允许旋转（24 种），不允许镜像：手性相反的棋子是两块不同的棋子
+  function matMul(a, b) {
+    var m = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (var i = 0; i < 3; i++) for (var j = 0; j < 3; j++) for (var k = 0; k < 3; k++) m[i][j] += a[i][k] * b[k][j];
+    return m;
+  }
+  function matApply(m, c) {
+    return [
+      m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2],
+      m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
+      m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2]
+    ];
+  }
+  // 绕 x / y / z 轴转 90°
+  var AXIS_ROT = [
+    [[1, 0, 0], [0, 0, -1], [0, 1, 0]],
+    [[0, 0, 1], [0, 1, 0], [-1, 0, 0]],
+    [[0, -1, 0], [1, 0, 0], [0, 0, 1]]
+  ];
+  var CUBE_ROTS = (function () {
+    var out = [[[1, 0, 0], [0, 1, 0], [0, 0, 1]]];
+    var seen = {};
+    seen[JSON.stringify(out[0])] = 1;
+    for (var i = 0; i < out.length; i++) {
+      for (var a = 0; a < 3; a++) {
+        var m = matMul(AXIS_ROT[a], out[i]);
+        var k = JSON.stringify(m);
+        if (!seen[k]) { seen[k] = 1; out.push(m); }
+      }
+    }
+    return out;
+  })();
+
+  function cubeNormalize(cells) {
+    var minX = Infinity, minY = Infinity, minZ = Infinity;
+    cells.forEach(function (c) {
+      if (c[0] < minX) minX = c[0];
+      if (c[1] < minY) minY = c[1];
+      if (c[2] < minZ) minZ = c[2];
+    });
+    return cells.map(function (c) { return [c[0] - minX, c[1] - minY, c[2] - minZ]; })
+      .sort(function (a, b) { return a[1] - b[1] || a[2] - b[2] || a[0] - b[0]; });
+  }
+  function cubeKey(cells) { return cells.map(function (c) { return c.join(','); }).join(';'); }
+  function cubeCanonical(cells) {
+    var best = null;
+    CUBE_ROTS.forEach(function (m) {
+      var k = cubeKey(cubeNormalize(cells.map(function (c) { return matApply(m, c); })));
+      if (best === null || k < best) best = k;
+    });
+    return best;
+  }
+  var FACE_DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+
+  function enumeratePolycubes(maxSize) {
+    var levels = [[cubeKey([[0, 0, 0]])]];
+    for (var size = 2; size <= maxSize; size++) {
+      var seen = {}, next = [];
+      levels[levels.length - 1].forEach(function (k) {
+        var cells = k.split(';').map(function (s) { return s.split(',').map(Number); });
+        var has = {};
+        cells.forEach(function (c) { has[c.join(',')] = 1; });
+        cells.forEach(function (c) {
+          FACE_DIRS.forEach(function (d) {
+            var nb = [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
+            if (has[nb.join(',')]) return;
+            var ck = cubeCanonical(cells.concat([nb]));
+            if (!seen[ck]) { seen[ck] = 1; next.push(ck); }
+          });
+        });
+      });
+      next.sort();
+      levels.push(next);
+    }
+    return levels;
+  }
+
+  function cubeName(cells) {
+    var n = cells.length;
+    if (n === 1) return '单块';
+    if (n === 2) return '二连';
+    function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+    function adj(a, b) { var d = sub(a, b); return Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2]) === 1; }
+    var axes = [0, 1, 2].filter(function (a) { return cells.some(function (c) { return c[a] !== cells[0][a]; }); });
+    if (axes.length === 1) return (n === 3 ? '三' : '四') + '连直条';
+    if (n === 3) return '小角';
+    var degree = cells.map(function (c) { return cells.filter(function (d) { return adj(c, d); }).length; });
+    var planar = axes.length === 2;
+    if (degree.indexOf(3) >= 0) return planar ? 'T 形' : '三脚架';
+    if (degree.every(function (d) { return d === 2; })) return '方块';
+    if (planar) {
+      var three = cells.some(function (a) {
+        return cells.some(function (b) {
+          if (a === b) return false;
+          var d = sub(b, a);
+          var m = [a[0] + 2 * d[0], a[1] + 2 * d[1], a[2] + 2 * d[2]];
+          return adj(a, b) && cells.some(function (c) { return c[0] === m[0] && c[1] === m[1] && c[2] === m[2]; });
+        });
+      });
+      return three ? 'L 形' : 'S 形';
+    }
+    // 两种扭转块互为镜像：用三段连接方向的行列式区分左右
+    var ends = cells.filter(function (c, i) { return degree[i] === 1; });
+    var chain = [ends[0]];
+    while (chain.length < n) {
+      var last = chain[chain.length - 1];
+      chain.push(cells.filter(function (c) { return adj(c, last) && chain.indexOf(c) < 0; })[0]);
+    }
+    var u = sub(chain[1], chain[0]), v = sub(chain[2], chain[1]), w = sub(chain[3], chain[2]);
+    var det = u[0] * (v[1] * w[2] - v[2] * w[1]) - u[1] * (v[0] * w[2] - v[2] * w[0]) + u[2] * (v[0] * w[1] - v[1] * w[0]);
+    return det > 0 ? '右旋' : '左旋';
+  }
+
+  function buildCubeSet() {
+    var raws = [];
+    enumeratePolycubes(4).forEach(function (level) {
+      level.forEach(function (k) { raws.push(k.split(';').map(function (s) { return s.split(',').map(Number); })); });
+    });
+    var pieces = raws.map(function (rawCells, index) {
+      var orients = [], byKey = {}, transformToOrient = [];
+      CUBE_ROTS.forEach(function (m) {
+        var cells = cubeNormalize(rawCells.map(function (c) { return matApply(m, c); }));
+        var key = cubeKey(cells);
+        if (!(key in byKey)) {
+          byKey[key] = orients.length;
+          var w = 0, h = 0, d = 0, flat = [], foot = {};
+          cells.forEach(function (c) {
+            w = Math.max(w, c[0] + 1); h = Math.max(h, c[1] + 1); d = Math.max(d, c[2] + 1);
+            flat.push(c[0], c[1], c[2]);
+            var fk = c[0] + ',' + c[2];
+            if (!(fk in foot) || c[1] < foot[fk]) foot[fk] = c[1];
+          });
+          // 每一列最低的方块（计算落点用）
+          var footList = [];
+          Object.keys(foot).forEach(function (fk) {
+            var p = fk.split(',').map(Number);
+            footList.push(p[0], p[1], foot[fk]);
+          });
+          // 对准格：最底层里最靠近中心的方块
+          var cx = (w - 1) / 2, cz = (d - 1) / 2, pivot = null, bd = Infinity;
+          cells.forEach(function (c) {
+            if (c[1] !== 0) return;
+            var dd = (c[0] - cx) * (c[0] - cx) + (c[2] - cz) * (c[2] - cz);
+            if (dd < bd - 1e-9) { bd = dd; pivot = c; }
+          });
+          orients.push({ cells: cells, flat: flat, foot: footList, w: w, h: h, d: d, pivot: pivot, key: key });
+        }
+        transformToOrient.push(byKey[key]);
+      });
+      // 每个朝向绕三根轴各转 ±90° 后得到的朝向
+      orients.forEach(function (o) {
+        o.turns = [];
+        [0, 1, 2].forEach(function (a) {
+          [1, -1].forEach(function (dir) {
+            var m = AXIS_ROT[a];
+            if (dir < 0) m = matMul(m, matMul(m, m));
+            o.turns.push(byKey[cubeKey(cubeNormalize(o.cells.map(function (c) { return matApply(m, c); })))]);
+          });
+        });
+      });
+      // 托盘里展示最矮、最舒展的朝向
+      var display = 0;
+      orients.forEach(function (o, i) {
+        var b = orients[display];
+        if (o.h < b.h || (o.h === b.h && o.w > b.w) || (o.h === b.h && o.w === b.w && o.d < b.d)) display = i;
+      });
+      return {
+        index: index,
+        id: 'C' + rawCells.length + String.fromCharCode(97 + index),
+        name: cubeName(rawCells),
+        size: rawCells.length,
+        orients: orients,
+        display: display,
+        transformToOrient: transformToOrient
+      };
+    });
+    return {
+      kind: 'cube',
+      dims: 3,
+      rotations: 24,
+      pieces: pieces,
+      count: pieces.length,
+      total: pieces.reduce(function (s, p) { return s + p.size; }, 0),
+      maxBox: 4,
+      // axis: 0 = x, 1 = y（竖轴）, 2 = z；dir: +1 / -1
+      turn: function (pieceIndex, orient, axis, dir) {
+        return pieces[pieceIndex].orients[orient].turns[axis * 2 + (dir > 0 ? 0 : 1)];
+      },
+      orientFor: function (pieceIndex, rot) {
+        return pieces[pieceIndex].transformToOrient[((rot % 24) + 24) % 24];
+      }
+    };
+  }
+
   var SETS = {
     square: buildSet(SQUARE, SQUARE_RAW),
-    tri: buildSet(TRI, triRaws)
+    tri: buildSet(TRI, triRaws),
+    cube: buildCubeSet()
   };
 
   return {

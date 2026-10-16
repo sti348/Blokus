@@ -21,7 +21,9 @@ function newRoom(mode) {
 function firstMove(room) {
   const st = Online.gameState(room);
   const m = Engine.legalMoves(st, st.current)[0];
-  return { type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y };
+  const a = { type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y };
+  if (m.z !== undefined) a.z = m.z;
+  return a;
 }
 
 test('房间：入座、权限与开局检查', () => {
@@ -101,6 +103,21 @@ test('房间：拒绝不可信的房间数据', () => {
   tampered.game.actions = [{ type: 'place', player: 0, piece: 'constructor', orient: 0, x: 0, y: 0 }];
   const st = Online.gameState(Online.normalizeRoom(tampered));
   assert.equal(st.actions.length, 0);
+});
+
+test('房间：立体棋盘的棋步带 z 坐标', () => {
+  let room = newRoom('cube');
+  room = ok(Online.applyOp(room, { type: 'claim', seat: 1, name: 'B' }, GUEST));
+  room = ok(Online.applyOp(room, { type: 'start' }, HOST));
+  assert.equal(room.game.config.size, 7);
+  assert.deepEqual(room.game.config.players[1].starts, [[6, 0, 0]]);
+  const move = firstMove(room);
+  assert.equal(typeof move.z, 'number');
+  assert.equal(Online.applyOp(room, { type: 'act', at: 0, action: { ...move, z: undefined } }, HOST).code, 'illegal');
+  room = ok(Online.applyOp(room, { type: 'act', at: 0, action: move }, HOST));
+  assert.equal(room.game.actions[0].z, move.z);
+  const again = Online.normalizeRoom(JSON.parse(JSON.stringify(room)));
+  assert.equal(Online.gameState(again).actions.length, 1);
 });
 
 test('房间号格式', () => {

@@ -48,6 +48,14 @@
       shape: 'tri',
       sizeFor: { 2: 7, 3: 8, 4: 9 },
       seats: FOUR
+    },
+    // 立体：N×N 地面、限高的空间，棋子受重力竖直落下；各自从地面的一个角出发
+    cube: {
+      name: '立体',
+      shape: 'cube',
+      sizeFor: { 2: 5, 3: 6, 4: 7 },
+      height: 5,
+      seats: FOUR
     }
   };
 
@@ -128,6 +136,7 @@
     });
     return {
       kind: kind,
+      dims: 2,
       parity: kind === 'tri',
       cols: cols,
       rows: rows,
@@ -188,12 +197,75 @@
     return t;
   }
 
+  // 立体棋盘：下标 = x + W·(z + D·y)，y 朝上；共面 = 面相邻，共棱或共顶点 = 角相邻
+  function cubeTopology(n, height) {
+    var W = n, D = n, H = height, total = W * D * H;
+    var valid = new Uint8Array(total), cells = [], edges = new Array(total), corners = new Array(total);
+    var centerDist = new Float64Array(total);
+    for (var y = 0; y < H; y++) {
+      for (var z = 0; z < D; z++) {
+        for (var x = 0; x < W; x++) {
+          var i = x + W * (z + D * y);
+          valid[i] = 1;
+          cells.push(i);
+          var e = [], c = [];
+          for (var dy = -1; dy <= 1; dy++) {
+            for (var dz = -1; dz <= 1; dz++) {
+              for (var dx = -1; dx <= 1; dx++) {
+                if (!dx && !dy && !dz) continue;
+                var nx = x + dx, ny = y + dy, nz = z + dz;
+                if (nx < 0 || ny < 0 || nz < 0 || nx >= W || ny >= H || nz >= D) continue;
+                var j = nx + W * (nz + D * ny);
+                (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) === 1 ? e : c).push(j);
+              }
+            }
+          }
+          edges[i] = e;
+          corners[i] = c;
+          var hx = x + 0.5 - W / 2, hz = z + 0.5 - D / 2;
+          centerDist[i] = Math.sqrt(hx * hx + hz * hz) * 1.4;
+        }
+      }
+    }
+    return {
+      kind: 'cube',
+      dims: 3,
+      gravity: true,
+      parity: false,
+      cols: W,
+      depth: D,
+      height: H,
+      rows: H,
+      n: total,
+      size: n,
+      valid: valid,
+      cells: cells,
+      edges: edges,
+      corners: corners,
+      centerDist: centerDist,
+      seatStarts: [[0, 0, 0], [W - 1, 0, 0], [W - 1, 0, D - 1], [0, 0, D - 1]]
+    };
+  }
+
   var topoCache = {};
   function topologyFor(mode, size) {
-    var shape = (isMode(mode) ? MODES[mode] : MODES.classic).shape;
-    var key = shape + ':' + size;
-    if (!topoCache[key]) topoCache[key] = shape === 'tri' ? triTopology(size) : squareTopology(size);
+    var m = isMode(mode) ? MODES[mode] : MODES.classic;
+    var key = m.shape + ':' + size;
+    if (!topoCache[key]) {
+      topoCache[key] = m.shape === 'tri' ? triTopology(size) : m.shape === 'cube' ? cubeTopology(size, m.height) : squareTopology(size);
+    }
     return topoCache[key];
+  }
+
+  function cellIndex(topo, c) {
+    return topo.dims === 3 ? c[0] + topo.cols * (c[2] + topo.depth * c[1]) : c[1] * topo.cols + c[0];
+  }
+
+  function inBounds(topo, c) {
+    if (topo.dims === 3) {
+      return c[0] >= 0 && c[1] >= 0 && c[2] >= 0 && c[0] < topo.cols && c[1] < topo.height && c[2] < topo.depth;
+    }
+    return c[0] >= 0 && c[1] >= 0 && c[0] < topo.cols && c[1] < topo.rows && topo.valid[c[1] * topo.cols + c[0]] === 1;
   }
 
   function setFor(mode) { return SETS[(isMode(mode) ? MODES[mode] : MODES.classic).shape]; }
@@ -221,7 +293,9 @@
         for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k)) p[k] = e[k];
         p.color = seat.color;
         p.label = seat.label;
-        p.starts = seat.start ? [seat.start.slice()] : topo.starts.map(function (s) { return s.slice(); });
+        p.starts = seat.start ? [seat.start.slice()]
+          : topo.seatStarts ? [topo.seatStarts[e.seat].slice()]
+          : topo.starts.map(function (s) { return s.slice(); });
         return p;
       })
     };
@@ -250,9 +324,9 @@
         for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k)) pl[k] = p[k];
         var starts = p.starts || [p.start];
         pl.index = idx;
-        pl.starts = starts.map(function (s) { return [s[0], s[1]]; });
-        pl.startIdx = starts.map(function (s) { return s[1] * topo.cols + s[0]; })
-          .filter(function (s) { return s >= 0 && s < topo.n && topo.valid[s]; });
+        pl.starts = starts.map(function (s) { return s.slice(); });
+        pl.startIdx = starts.filter(function (s) { return Array.isArray(s) && s.length === topo.dims && inBounds(topo, s); })
+          .map(function (s) { return cellIndex(topo, s); });
         pl.remaining = [];
         for (var j = 0; j < set.count; j++) pl.remaining.push(true);
         pl.remainingSquares = set.total;
@@ -272,16 +346,81 @@
     return state;
   }
 
-  function placementCells(state, pieceIndex, orient, x, y) {
+  function placementCells(state, pieceIndex, orient, x, y, z) {
     var flat = state.set.pieces[pieceIndex].orients[orient].flat;
     var out = [];
-    for (var k = 0; k < flat.length; k += 2) out.push([x + flat[k], y + flat[k + 1]]);
+    var k;
+    if (state.topo.dims === 3) {
+      for (k = 0; k < flat.length; k += 3) out.push([x + flat[k], y + flat[k + 1], z + flat[k + 2]]);
+    } else {
+      for (k = 0; k < flat.length; k += 2) out.push([x + flat[k], y + flat[k + 1]]);
+    }
     return out;
   }
 
-  function placementIndices(state, pieceIndex, orient, x, y) {
-    var cols = state.topo.cols;
-    return placementCells(state, pieceIndex, orient, x, y).map(function (c) { return c[1] * cols + c[0]; });
+  function placementIndices(state, pieceIndex, orient, x, y, z) {
+    var topo = state.topo;
+    return placementCells(state, pieceIndex, orient, x, y, z).map(function (c) { return cellIndex(topo, c); });
+  }
+
+  /* ---------- 立体：重力 ---------- */
+
+  // 每一列最高的方块之上一格（空列为 0）
+  function heightMap(board, topo) {
+    var W = topo.cols, D = topo.depth, H = topo.height, layer = W * D;
+    var hm = new Int8Array(layer);
+    for (var y = 0; y < H; y++) {
+      for (var c = 0; c < layer; c++) if (board[c + layer * y] !== EMPTY) hm[c] = y + 1;
+    }
+    return hm;
+  }
+
+  // 棋子在 (x, z) 处竖直落下后的高度；出界返回 -1；ignoreCeiling 时允许超过限高
+  function dropY(state, pieceIndex, orient, x, z, ignoreCeiling, hm) {
+    var topo = state.topo;
+    var o = state.set.pieces[pieceIndex].orients[orient];
+    if (x < 0 || z < 0 || x + o.w > topo.cols || z + o.d > topo.depth) return -1;
+    hm = hm || heightMap(state.board, topo);
+    var y = 0, foot = o.foot;
+    for (var k = 0; k < foot.length; k += 3) {
+      var need = hm[(z + foot[k + 1]) * topo.cols + x + foot[k]] - foot[k + 2];
+      if (need > y) y = need;
+    }
+    if (!ignoreCeiling && y + o.h > topo.height) return -1;
+    return y;
+  }
+
+  // 按列枚举：每个 (棋子, 朝向, x, z) 至多一个落点
+  function forEachDrop(state, p, visit, remaining, forb, mark) {
+    var topo = state.topo, board = state.board;
+    var W = topo.cols, D = topo.depth, H = topo.height, layer = W * D;
+    var hm = heightMap(board, topo);
+    var pieces = state.set.pieces;
+    for (var pi = 0; pi < pieces.length; pi++) {
+      if (!remaining[pi] || !state.players[p].remaining[pi]) continue;
+      var orients = pieces[pi].orients;
+      for (var oi = 0; oi < orients.length; oi++) {
+        var o = orients[oi], flat = o.flat, foot = o.foot, len = flat.length;
+        for (var z = 0; z + o.d <= D; z++) {
+          for (var x = 0; x + o.w <= W; x++) {
+            var y = 0, k;
+            for (k = 0; k < foot.length; k += 3) {
+              var need = hm[(z + foot[k + 1]) * W + x + foot[k]] - foot[k + 2];
+              if (need > y) y = need;
+            }
+            if (y + o.h > H) continue;
+            var ok = true, touch = false;
+            for (k = 0; k < len; k += 3) {
+              var idx = x + flat[k] + W * (z + flat[k + 2]) + layer * (y + flat[k + 1]);
+              if (forb[idx]) { ok = false; break; }
+              if (mark[idx]) touch = true;
+            }
+            if (ok && touch && visit(pi, oi, x, y, z)) return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   // 1 表示玩家 p 不能占用：已有棋子 / 棋盘外，或与 p 的棋子边相邻
@@ -345,6 +484,10 @@
     var mark = anchors.mark, list = anchors.list;
     if (!list.length) return;
     var remaining = pieceFilter || player.remaining;
+    if (topo.gravity) {
+      forEachDrop(state, p, visit, remaining, forb, mark);
+      return;
+    }
     var pieces = state.set.pieces;
     for (var pi = 0; pi < pieces.length; pi++) {
       if (!remaining[pi] || !player.remaining[pi]) continue;
@@ -377,8 +520,10 @@
 
   function legalMoves(state, p, pieceFilter) {
     var moves = [];
-    forEachMove(state, p, function (piece, orient, x, y) {
-      moves.push({ piece: piece, orient: orient, x: x, y: y });
+    forEachMove(state, p, function (piece, orient, x, y, z) {
+      var m = { piece: piece, orient: orient, x: x, y: y };
+      if (z !== undefined) m.z = z;
+      moves.push(m);
     }, pieceFilter);
     return moves;
   }
@@ -398,27 +543,29 @@
 
   /**
    * 检查落子，合法返回 null，否则返回原因代码：
-   * used / bounds / occupied / edge / start / corner
+   * used / bounds / ceiling / occupied / float / edge / start / corner
    */
-  function checkPlacement(state, p, pieceIndex, orient, x, y) {
+  function checkPlacement(state, p, pieceIndex, orient, x, y, z) {
     var player = state.players[p];
     if (!Number.isInteger(pieceIndex) || !Number.isInteger(orient)) return 'used';
     var piece = state.set.pieces[pieceIndex];
     if (!player || player.done || !piece || !player.remaining[pieceIndex] || !piece.orients[orient]) return 'used';
-    if (x !== Math.floor(x) || y !== Math.floor(y)) return 'bounds';
     var topo = state.topo, board = state.board;
+    if (!Number.isInteger(x) || !Number.isInteger(y) || (topo.dims === 3 && !Number.isInteger(z))) return 'bounds';
     if (topo.parity && ((x + y) & 1)) return 'bounds';
-    var cells = placementCells(state, pieceIndex, orient, x, y);
+    var cells = placementCells(state, pieceIndex, orient, x, y, z);
     var idx = [];
     var i, k;
     for (i = 0; i < cells.length; i++) {
-      var cx = cells[i][0], cy = cells[i][1];
-      if (cx < 0 || cy < 0 || cx >= topo.cols || cy >= topo.rows) return 'bounds';
-      var j = cy * topo.cols + cx;
-      if (!topo.valid[j]) return 'bounds';
-      idx.push(j);
+      if (!inBounds(topo, cells[i])) {
+        var c3 = cells[i];
+        if (topo.dims === 3 && c3[1] >= topo.height && c3[0] >= 0 && c3[2] >= 0 && c3[0] < topo.cols && c3[2] < topo.depth) return 'ceiling';
+        return 'bounds';
+      }
+      idx.push(cellIndex(topo, cells[i]));
     }
     for (i = 0; i < idx.length; i++) if (board[idx[i]] !== EMPTY) return 'occupied';
+    if (topo.gravity && dropY(state, pieceIndex, orient, x, z, true) !== y) return 'float';
     for (i = 0; i < idx.length; i++) {
       var e = topo.edges[idx[i]];
       for (k = 0; k < e.length; k++) if (board[e[k]] === p) return 'edge';
@@ -478,15 +625,17 @@
       advance(state);
       return null;
     }
-    var reason = checkPlacement(state, p, action.piece, action.orient, action.x, action.y);
+    var reason = checkPlacement(state, p, action.piece, action.orient, action.x, action.y, action.z);
     if (reason) return reason;
-    var cells = placementCells(state, action.piece, action.orient, action.x, action.y);
-    for (var i = 0; i < cells.length; i++) state.board[cells[i][1] * state.topo.cols + cells[i][0]] = p;
+    var cells = placementCells(state, action.piece, action.orient, action.x, action.y, action.z);
+    for (var i = 0; i < cells.length; i++) state.board[cellIndex(state.topo, cells[i])] = p;
     player.remaining[action.piece] = false;
     player.remainingSquares -= state.set.pieces[action.piece].size;
     player.placed++;
     player.lastPiece = action.piece;
-    state.actions.push({ type: 'place', player: p, piece: action.piece, orient: action.orient, x: action.x, y: action.y });
+    var record = { type: 'place', player: p, piece: action.piece, orient: action.orient, x: action.x, y: action.y };
+    if (state.topo.dims === 3) record.z = action.z;
+    state.actions.push(record);
     state.lastMove = { player: p, piece: action.piece, cells: cells };
     advance(state);
     return null;
@@ -545,6 +694,10 @@
     PIECES: SETS.square.pieces,
     TOTAL_SQUARES: SETS.square.total,
     topologyFor: topologyFor,
+    cellIndex: cellIndex,
+    inBounds: inBounds,
+    heightMap: heightMap,
+    dropY: dropY,
     setFor: setFor,
     sizeFor: sizeFor,
     buildConfig: buildConfig,

@@ -651,6 +651,23 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .rules ol { padding-left: 1.4em; margin: 0 0 12px; display: grid; gap: 4px; }
 .rules p { max-width: 65ch; }
 
+/* 立体视角按钮 */
+.cam-ctl {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--raised) 86%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.cam-ctl .btn.icon { min-width: 34px; min-height: 32px; padding: 0 6px; }
+.board-wrap.cube .toast { top: auto; bottom: 14px; }
+
 /* ---------- 本地 / 联机 切换 ---------- */
 .tabs {
   display: grid;

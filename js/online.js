@@ -107,9 +107,10 @@
         config: Engine.buildConfig(raw.mode, entries),
         actions: g.actions.map(function (a) {
           a = a || {};
-          return a.type === 'resign'
-            ? { type: 'resign', player: a.player }
-            : { type: 'place', player: a.player, piece: a.piece, orient: a.orient, x: a.x, y: a.y };
+          if (a.type === 'resign') return { type: 'resign', player: a.player };
+          var rec = { type: 'place', player: a.player, piece: a.piece, orient: a.orient, x: a.x, y: a.y };
+          if (a.z !== undefined) rec.z = a.z;
+          return rec;
         })
       };
     }
@@ -294,6 +295,7 @@
         if (a.type === 'resign') action = { type: 'resign' };
         else if (a.type === 'place') {
           action = { type: 'place', piece: intOr(a.piece, -1), orient: intOr(a.orient, -1), x: intOr(a.x, -999), y: intOr(a.y, -999) };
+          if (st.topo.dims === 3) action.z = intOr(a.z, -999);
         } else return fail('bad_action', '无效的棋步');
         var reason = Engine.applyAction(st, action);
         if (reason) return fail('illegal', '这步棋不合规则（' + reason + '）');

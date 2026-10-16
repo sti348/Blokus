@@ -53,11 +53,7 @@
   }
 
   function moveIndices(state, move) {
-    var cols = state.topo.cols;
-    var flat = state.set.pieces[move.piece].orients[move.orient].flat;
-    var out = [];
-    for (var k = 0; k < flat.length; k += 2) out.push((move.y + flat[k + 1]) * cols + move.x + flat[k]);
-    return out;
+    return Engine.placementIndices(state, move.piece, move.orient, move.x, move.y, move.z);
   }
 
   // 快速估值：只看棋子附近（边相邻 + 角相邻）的局部变化

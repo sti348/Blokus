@@ -11,12 +11,13 @@
   var Net = BlokusNet;
   var EMPTY = Engine.EMPTY;
 
-  var MODE_LIST = ['classic', 'duo', 'trigon'];
-  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块' };
+  var MODE_LIST = ['classic', 'duo', 'trigon', 'cube'];
+  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块', cube: '立体' };
   var MODE_NOTE = {
     classic: '21 块方块棋子，四人各从棋盘一角出发。',
     duo: '两人对战，从棋盘内侧的两个起点出发。',
-    trigon: '22 块三角棋子，6 个公共起点；4 人用边长 9 的六边形棋盘，人少时棋盘相应缩小。'
+    trigon: '22 块三角棋子，6 个公共起点；4 人用边长 9 的六边形棋盘，人少时棋盘相应缩小。',
+    cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。'
   };
   var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难' };
   var SPEED_MS = { fast: 200, normal: 550, slow: 1100 };
@@ -27,8 +28,11 @@
     edge: '不能和自己的棋子边贴边',
     start: '第一块必须盖住起点',
     corner: '必须和自己的棋子角对角相接',
-    over: '对局已经结束'
+    over: '对局已经结束',
+    ceiling: '叠得太高了：最多 5 层',
+    float: '棋子会一直落到底，不能悬空'
   };
+  var View3D = BlokusView3D;
   var STORE_PREFS = 'blokus.prefs.v1';
   var STORE_SAVE = 'blokus.save.v1';
   var STORE_ONLINE = 'blokus.online.v1';
@@ -55,7 +59,8 @@
   }
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
-  function sameCell(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y; }
+  function sameCell(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y && a.z === b.z; }
+  function copyCell(c) { return c.z === undefined ? { x: c.x, y: c.y } : { x: c.x, z: c.z }; }
 
   /* ================= 主题颜色 ================= */
 
@@ -245,7 +250,9 @@
   function cellPolyPx(L, i) { return L.topo.polys[i].map(function (v) { return vpx(L, v); }); }
   function cellCenterPx(L, i) { return [L.ox + L.topo.centroids[i * 2] * L.k, L.oy + L.topo.centroids[i * 2 + 1] * L.k]; }
 
-  BoardView.prototype.cellAt = function (clientX, clientY, topo) {
+  BoardView.prototype.cellAt = function (clientX, clientY, state) {
+    var topo = state.topo;
+    if (topo.kind === 'cube') return View3D.pick(this, state, clientX, clientY);
     var r = this.canvas.getBoundingClientRect();
     if (clientX < r.left || clientY < r.top || clientX > r.right || clientY > r.bottom) return null;
     var L = this.layout(topo);
@@ -358,6 +365,12 @@
     if (!state || !this.css) return;
     var ov = this.getOverlay ? this.getOverlay() : {};
     now = now || performance.now();
+    if (state.topo.kind === 'cube') {
+      ov.dropMs = DROP_MS;
+      ov.pulse = REDUCED_MOTION ? 1 : 0.55 + 0.45 * Math.sin(now / 220);
+      View3D.draw(this, state, ov, palette, now);
+      return;
+    }
     var g = this.ctx, self = this, topo = state.topo;
     var L = this.layout(topo);
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -524,7 +537,7 @@
     mode: 'classic',
     tab: 'local',
     nick: '',
-    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4) },
+    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4), cube: defaultSeats(4) },
     hints: true,
     sound: true,
     speed: 'normal'
@@ -567,6 +580,7 @@
   var PRESETS = {
     classic: FOUR_PRESETS,
     trigon: FOUR_PRESETS,
+    cube: FOUR_PRESETS,
     duo: [
       { label: '人机对战', types: ['human', 'ai'] },
       { label: '双人同屏', types: ['human', 'human'] },
@@ -687,7 +701,7 @@
   var demo = { view: null, state: null, timer: 0, anim: null, round: 0 };
 
   function demoNew() {
-    var mode = demo.round++ % 2 ? 'trigon' : 'classic';
+    var mode = ['classic', 'trigon', 'cube'][demo.round++ % 3];
     demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.map(function (s, i) { return { seat: i }; })));
     demo.anim = null;
     $('demo-label').textContent = '电脑演示局 · ' + MODE_LABEL[mode];
@@ -709,8 +723,8 @@
     var move = AI.chooseMove(st, st.current % 2 ? 'normal' : 'hard');
     if (move) {
       var p = st.current;
-      Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y });
-      demo.anim = { cells: Engine.placementIndices(st, move.piece, move.orient, move.x, move.y), player: p, t0: performance.now() };
+      Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z });
+      demo.anim = { cells: Engine.placementIndices(st, move.piece, move.orient, move.x, move.y, move.z), player: p, t0: performance.now() };
       animate();
     }
     demo.timer = setTimeout(demoStep, 520);
@@ -728,7 +742,7 @@
         demoNew();
         for (var k = 0; k < 44 && !demo.state.over; k++) {
           var m = AI.chooseMove(demo.state, 'normal');
-          Engine.applyAction(demo.state, { type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y });
+          Engine.applyAction(demo.state, { type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y, z: m.z });
         }
       }
       demo.view.draw();
@@ -777,9 +791,9 @@
   function isLocalAITurn() { return game.mode === 'local' && !!game.state && !game.state.over && cur().type === 'ai'; }
   function colorVar(pl) { return 'var(--p-' + pl.color + ')'; }
   function cellsToIdx(state, cells) {
-    var cols = state.topo.cols;
-    return cells.map(function (c) { return c[1] * cols + c[0]; });
+    return cells.map(function (c) { return Engine.cellIndex(state.topo, c); });
   }
+  function isCube() { return !!game.state && game.state.topo.kind === 'cube'; }
 
   function myPlayers() {
     return game.state.players.filter(function (p) { return p.type === 'human' && (!isOnlineGame() || p.owner === myId()); });
@@ -833,6 +847,7 @@
     resetSelection();
     showScreen('game');
     if (game.trayKind !== game.state.set.kind) buildTray();
+    applyModeControls();
     if (!game.view) {
       game.view = new BoardView($('board'), function () { return game.state; }, gameOverlay);
       new ResizeObserver(function () { if (game.view.resize()) game.view.draw(); }).observe($('board'));
@@ -841,6 +856,19 @@
     saveGame();
     onTurnStart(true);
     renderGame();
+  }
+
+  function applyModeControls() {
+    var cube = isCube();
+    $('cam-ctl').hidden = !cube;
+    $('board-wrap').classList.toggle('cube', cube);
+    $('roll-btn').hidden = !cube;
+    $('rot-ccw').title = cube ? '水平向左转（Shift+R）' : '逆时针旋转（E）';
+    $('rot-cw').title = cube ? '水平向右转（R / 滚轮）' : '顺时针旋转（R / 右键 / 滚轮）';
+    $('flip-btn').title = cube ? '向前翻（F）' : '翻转（F）';
+    $('keys-help').textContent = cube
+      ? '点选棋子，指向一列后点击让它落下 · R 水平转 · F 前翻 · G 侧翻 · Q / E 转视角 · 拖动空白处或右键拖动旋转视角'
+      : '点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消';
   }
 
   function resetSelection() {
@@ -879,6 +907,15 @@
       game.perPiece = Engine.movesPerPiece(st, st.current);
       var forb = Engine.forbiddenMask(st.board, st.topo, st.current);
       game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb);
+      game.anchorDots = game.anchors.list;
+      if (st.topo.kind === 'cube') {
+        // 立体：只标出棋子落下后能停住的角点
+        var hm = Engine.heightMap(st.board, st.topo);
+        game.anchorDots = game.anchors.list.filter(function (i) {
+          var c = View3D.coordOf(st.topo, i);
+          return hm[c[2] * st.topo.cols + c[0]] === c[1];
+        });
+      }
       if (!first) {
         if (isOnlineGame()) {
           toast('轮到你了（' + pl.label + '方）');
@@ -913,7 +950,7 @@
   function commitMove(move, byAI) {
     var st = game.state;
     var p = st.current;
-    var reason = Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y });
+    var reason = Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z });
     if (reason) return reason;
     game.anim = { cells: cellsToIdx(st, st.lastMove.cells), player: p, t0: performance.now() };
     sound('place', byAI && humanCount() > 0);
@@ -945,7 +982,7 @@
 
   function sameAction(a, b) {
     return !!a && !!b && a.type === b.type && a.player === b.player &&
-      (a.type === 'resign' || (a.piece === b.piece && a.orient === b.orient && a.x === b.x && a.y === b.y));
+      (a.type === 'resign' || (a.piece === b.piece && a.orient === b.orient && a.x === b.x && a.y === b.y && a.z === b.z));
   }
 
   function refreshMeta(config) {
@@ -1045,7 +1082,7 @@
     online.aiTimer = setTimeout(function () {
       if (online !== session || !online.room || online.room.rev !== rev || !game.state || game.state.over || cur().type !== 'ai') return;
       var move = AI.chooseMove(game.state, cur().level);
-      var action = move ? { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y } : { type: 'resign' };
+      var action = move ? { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z } : { type: 'resign' };
       sendOp({ type: 'act', at: game.state.actions.length, action: action }, true).catch(function () {});
     }, delay);
   }
@@ -1053,21 +1090,31 @@
   /* ---------- 选择 / 放置 ---------- */
 
   function currentOrient() {
-    return game.state.set.orientFor(game.sel.piece, game.sel.rot, game.sel.flip);
+    var set = game.state.set;
+    return set.kind === 'cube' ? game.sel.orient : set.orientFor(game.sel.piece, game.sel.rot, game.sel.flip);
   }
 
   function clampGhost() {
-    if (!game.ghost || game.sel.piece < 0 || game.state.topo.kind !== 'square') return;
-    var o = game.state.set.pieces[game.sel.piece].orients[currentOrient()];
+    if (!game.ghost || game.sel.piece < 0) return;
     var topo = game.state.topo;
+    if (topo.kind === 'tri') return;
+    var o = game.state.set.pieces[game.sel.piece].orients[currentOrient()];
     game.ghost.x = clamp(game.ghost.x, o.pivot[0], topo.cols - o.w + o.pivot[0]);
-    game.ghost.y = clamp(game.ghost.y, o.pivot[1], topo.rows - o.h + o.pivot[1]);
+    if (topo.kind === 'cube') game.ghost.z = clamp(game.ghost.z, o.pivot[2], topo.depth - o.d + o.pivot[2]);
+    else game.ghost.y = clamp(game.ghost.y, o.pivot[1], topo.rows - o.h + o.pivot[1]);
   }
 
   function ghostMove() {
     if (game.sel.piece < 0 || !game.ghost) return null;
     var oi = currentOrient();
     var o = game.state.set.pieces[game.sel.piece].orients[oi];
+    if (isCube()) {
+      // 立体：对准的是一列，高度由重力决定
+      var px = game.ghost.x - o.pivot[0], pz = game.ghost.z - o.pivot[2];
+      var y = Engine.dropY(game.state, game.sel.piece, oi, px, pz, true);
+      if (y < 0) return null;
+      return { piece: game.sel.piece, orient: oi, x: px, y: y, z: pz };
+    }
     var gx = game.ghost.x, gy = game.ghost.y;
     var pv = o.pivot;
     // 三角格：光标格与对准格的尖朝向必须一致，否则换一个朝向相同的格子对准
@@ -1086,34 +1133,51 @@
 
   function defaultGhost() {
     var topo = game.state.topo;
-    var list = game.anchors && game.anchors.list.length ? game.anchors.list : topo.cells;
+    var list = game.anchorDots && game.anchorDots.length ? game.anchorDots
+      : game.anchors && game.anchors.list.length ? game.anchors.list : topo.cells;
     var best = list[0], bd = Infinity;
     list.forEach(function (i) {
       if (topo.centerDist[i] < bd) { bd = topo.centerDist[i]; best = i; }
     });
+    if (topo.kind === 'cube') {
+      var c = View3D.coordOf(topo, best);
+      return { x: c[0], z: c[2] };
+    }
     return { x: best % topo.cols, y: Math.floor(best / topo.cols) };
   }
 
   function gameOverlay() {
     var st = game.state;
     var ov = { lastMove: st.lastMove ? cellsToIdx(st, st.lastMove.cells) : null, anim: game.anim };
-    if (canAct()) {
-      var pl = cur();
-      var color = palette.colors[pl.color];
-      if (prefs.hints && game.anchors) ov.anchors = { list: game.anchors.list, color: color };
-      if (game.hint) ov.hint = { cells: Engine.placementIndices(st, game.hint.piece, game.hint.orient, game.hint.x, game.hint.y), color: palette.ink };
-      var m = ghostMove();
-      if (m) {
-        var topo = st.topo;
-        var cells = Engine.placementCells(st, m.piece, m.orient, m.x, m.y)
-          .filter(function (c) { return c[0] >= 0 && c[1] >= 0 && c[0] < topo.cols && c[1] < topo.rows && topo.valid[c[1] * topo.cols + c[0]]; });
-        ov.ghost = {
-          cells: cellsToIdx(st, cells),
-          color: color,
-          valid: Engine.checkPlacement(st, st.current, m.piece, m.orient, m.x, m.y) === null
-        };
-      }
+    if (!canAct()) return ov;
+    var pl = cur();
+    var color = palette.colors[pl.color];
+    var topo = st.topo;
+    var cube = topo.kind === 'cube';
+    if (prefs.hints && game.anchors) ov.anchors = { list: game.anchorDots || game.anchors.list, color: color };
+    if (game.hint) {
+      var h = game.hint;
+      ov.hint = {
+        cells: cube ? Engine.placementCells(st, h.piece, h.orient, h.x, h.y, h.z) : Engine.placementIndices(st, h.piece, h.orient, h.x, h.y),
+        color: palette.ink
+      };
     }
+    var m = ghostMove();
+    if (!m) return ov;
+    var valid = Engine.checkPlacement(st, st.current, m.piece, m.orient, m.x, m.y, m.z) === null;
+    if (cube) {
+      var hm = Engine.heightMap(st.board, topo);
+      var foot = st.set.pieces[m.piece].orients[m.orient].foot;
+      var shadow = [];
+      for (var k = 0; k < foot.length; k += 3) {
+        var fx = m.x + foot[k], fz = m.z + foot[k + 1];
+        shadow.push([fx, hm[fz * topo.cols + fx], fz]);
+      }
+      ov.ghost = { cells: Engine.placementCells(st, m.piece, m.orient, m.x, m.y, m.z), shadow: shadow, color: color, valid: valid };
+      return ov;
+    }
+    var cells = Engine.placementCells(st, m.piece, m.orient, m.x, m.y).filter(function (c) { return Engine.inBounds(topo, c); });
+    ov.ghost = { cells: cellsToIdx(st, cells), color: color, valid: valid };
     return ov;
   }
 
@@ -1123,7 +1187,7 @@
       game.sel.piece = -1;
       game.hint = null;
     } else {
-      game.sel = { piece: pi, rot: 0, flip: 0 };
+      game.sel = { piece: pi, rot: 0, flip: 0, orient: game.state.set.pieces[pi].display };
       game.hint = null;
       game.hintLockCell = null;
       game.ghostByTap = false;
@@ -1136,24 +1200,53 @@
     drawBoard();
   }
 
-  function rotate(d) {
-    if (game.sel.piece < 0 || !canAct()) return;
-    var R = game.state.set.rotations;
-    game.sel.rot = (game.sel.rot + d + R) % R;
+  function afterTurnPiece() {
     clampGhost();
     renderSelection();
     drawBoard();
   }
 
-  // 始终沿屏幕竖轴镜像：F·R^k = R^-k·F
+  // 方块 / 三角：平面内旋转；立体：绕竖轴转 90°
+  function rotate(d) {
+    if (game.sel.piece < 0 || !canAct()) return;
+    var set = game.state.set;
+    if (set.kind === 'cube') {
+      game.sel.orient = set.turn(game.sel.piece, game.sel.orient, 1, d);
+    } else {
+      var R = set.rotations;
+      game.sel.rot = (game.sel.rot + d + R) % R;
+    }
+    afterTurnPiece();
+  }
+
+  // 方块 / 三角：始终沿屏幕竖轴镜像（F·R^k = R^-k·F）；立体：向前翻
   function flip() {
     if (game.sel.piece < 0 || !canAct()) return;
-    var R = game.state.set.rotations;
-    game.sel.flip ^= 1;
-    game.sel.rot = (R - game.sel.rot) % R;
-    clampGhost();
-    renderSelection();
-    drawBoard();
+    var set = game.state.set;
+    if (set.kind === 'cube') {
+      game.sel.orient = set.turn(game.sel.piece, game.sel.orient, View3D.screenAxes(game.view).tip, 1);
+    } else {
+      var R = set.rotations;
+      game.sel.flip ^= 1;
+      game.sel.rot = (R - game.sel.rot) % R;
+    }
+    afterTurnPiece();
+  }
+
+  // 立体：向侧面翻
+  function roll() {
+    if (game.sel.piece < 0 || !canAct() || !isCube()) return;
+    game.sel.orient = game.state.set.turn(game.sel.piece, game.sel.orient, View3D.screenAxes(game.view).roll, 1);
+    afterTurnPiece();
+  }
+
+  function reasonText(reason) {
+    if (isCube()) {
+      if (reason === 'edge') return '不能和自己的棋子面贴面（包括叠在自己的棋子正上方）';
+      if (reason === 'corner') return '必须和自己的棋子棱或角相接';
+      if (reason === 'start') return '第一块必须盖住地面上你的起始角';
+    }
+    return REASON_TEXT[reason] || '这里放不下';
   }
 
   function tryPlace() {
@@ -1163,15 +1256,18 @@
       toast(game.sel.piece < 0 ? '先选一块棋子' : '先在棋盘上选位置');
       return false;
     }
-    var reason = Engine.checkPlacement(game.state, game.state.current, m.piece, m.orient, m.x, m.y);
+    var reason = Engine.checkPlacement(game.state, game.state.current, m.piece, m.orient, m.x, m.y, m.z);
     if (reason) {
-      toast(REASON_TEXT[reason] || '这里放不下', 'warn');
+      toast(reasonText(reason), 'warn');
       sound('bad');
       return false;
     }
     resetSelection();
-    if (isOnlineGame()) onlineSubmit({ type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y });
-    else commitMove(m, false);
+    if (isOnlineGame()) {
+      var action = { type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y };
+      if (m.z !== undefined) action.z = m.z;
+      onlineSubmit(action);
+    } else commitMove(m, false);
     return true;
   }
 
@@ -1181,13 +1277,35 @@
     if (!move) return;
     var piece = game.state.set.pieces[move.piece];
     var o = piece.orients[move.orient];
-    game.sel = { piece: move.piece, rot: o.rot, flip: o.flip };
-    game.ghost = { x: move.x + o.pivot[0], y: move.y + o.pivot[1] };
+    if (game.state.set.kind === 'cube') {
+      game.sel = { piece: move.piece, rot: 0, flip: 0, orient: move.orient };
+      game.ghost = { x: move.x + o.pivot[0], z: move.z + o.pivot[2] };
+    } else {
+      game.sel = { piece: move.piece, rot: o.rot, flip: o.flip };
+      game.ghost = { x: move.x + o.pivot[0], y: move.y + o.pivot[1] };
+    }
     game.hint = move;
     game.ghostByTap = false;
-    game.hintLockCell = game.hover ? { x: game.hover.x, y: game.hover.y } : null;
+    game.hintLockCell = game.hover ? copyCell(game.hover) : null;
     toast('试试「' + piece.name + '」放在虚线框的位置');
     renderDock();
+    animate();
+  }
+
+  // 立体视角：yaw 每步 45°，pitch 每步约 11°
+  function turnCamera(dYaw, dPitch) {
+    if (!game.view) return;
+    var cam = game.view.cam || (game.view.cam = { yaw: View3D.DEFAULT_CAM.yaw, pitch: View3D.DEFAULT_CAM.pitch });
+    var t = game.view.camTarget || { yaw: cam.yaw, pitch: cam.pitch };
+    t = { yaw: t.yaw + dYaw * Math.PI / 4, pitch: View3D.clampPitch(t.pitch + dPitch * 0.2) };
+    if (REDUCED_MOTION) {
+      cam.yaw = t.yaw;
+      cam.pitch = t.pitch;
+      renderSelection();
+      drawBoard();
+      return;
+    }
+    game.view.camTarget = t;
     animate();
   }
 
@@ -1234,11 +1352,29 @@
       var more = false;
       if (game.view && !$('game').hidden && game.state) {
         if (game.anim && now - game.anim.t0 >= DROP_MS) game.anim = null;
+        var ct = game.view.camTarget;
+        if (ct) {
+          var cam = game.view.cam;
+          cam.yaw += (ct.yaw - cam.yaw) * 0.25;
+          cam.pitch += (ct.pitch - cam.pitch) * 0.25;
+          if (Math.abs(ct.yaw - cam.yaw) < 0.003 && Math.abs(ct.pitch - cam.pitch) < 0.003) {
+            cam.yaw = ct.yaw;
+            cam.pitch = ct.pitch;
+            game.view.camTarget = null;
+            renderSelection();
+          } else more = true;
+        }
         game.view.draw(now);
         if (game.anim || (game.hint && !REDUCED_MOTION && canAct())) more = true;
       }
       if (demo.view && !$('setup').hidden) {
         if (demo.anim && now - demo.anim.t0 >= DROP_MS) demo.anim = null;
+        // 立体演示局缓慢环绕
+        if (demo.state && demo.state.topo.kind === 'cube' && !REDUCED_MOTION && !document.hidden) {
+          demo.view.cam = demo.view.cam || { yaw: View3D.DEFAULT_CAM.yaw, pitch: View3D.DEFAULT_CAM.pitch };
+          demo.view.cam.yaw += 0.004;
+          more = true;
+        }
         demo.view.draw(now);
         if (demo.anim) more = true;
       }
@@ -1352,7 +1488,7 @@
       b.dataset.piece = pi;
       b.setAttribute('role', 'option');
       b.setAttribute('aria-label', piece.name + '，' + piece.size + ' 格');
-      b.innerHTML = pieceSVG(piece.orients[piece.display], set.maxBox);
+      b.innerHTML = set.kind === 'cube' ? View3D.pieceSVG(piece.orients[piece.display], null, 4.2) : pieceSVG(piece.orients[piece.display], set.maxBox);
       b.addEventListener('click', function () { selectPiece(pi); });
       tray.appendChild(b);
     });
@@ -1391,13 +1527,13 @@
     if (has) {
       var set = game.state.set;
       var o = set.pieces[game.sel.piece].orients[currentOrient()];
-      prev.innerHTML = pieceSVG(o, set.maxBox);
+      prev.innerHTML = set.kind === 'cube' ? View3D.pieceSVG(o, game.view && game.view.cam, 4.2) : pieceSVG(o, set.maxBox);
       prev.setAttribute('aria-label', '已选：' + set.pieces[game.sel.piece].name);
     } else {
       prev.textContent = active ? '从下方选择棋子' : game.state.over ? '对局结束' : '等待其他玩家';
       prev.removeAttribute('aria-label');
     }
-    ['rot-ccw', 'rot-cw', 'flip-btn'].forEach(function (id) { $(id).disabled = !has; });
+    ['rot-ccw', 'rot-cw', 'flip-btn', 'roll-btn'].forEach(function (id) { $(id).disabled = !has; });
     updatePlaceButton();
   }
 
@@ -1808,10 +1944,21 @@
 
   function bindBoard() {
     var canvas = $('board');
+    var orbit = null;
 
     canvas.addEventListener('pointermove', function (e) {
       if (!game.state) return;
-      var cell = game.view.cellAt(e.clientX, e.clientY, game.state.topo);
+      if (orbit) {
+        var dx = e.clientX - orbit.x, dy = e.clientY - orbit.y;
+        if (Math.abs(dx) + Math.abs(dy) > 4) orbit.moved = true;
+        var cam = game.view.cam;
+        cam.yaw = orbit.yaw - dx * 0.009;
+        cam.pitch = View3D.clampPitch(orbit.pitch + dy * 0.006);
+        game.view.camTarget = null;
+        drawBoard();
+        return;
+      }
+      var cell = game.view.cellAt(e.clientX, e.clientY, game.state);
       if (e.pointerType === 'mouse') {
         game.hover = cell;
         if (!canAct() || game.sel.piece < 0 || !cell) return;
@@ -1820,12 +1967,12 @@
           game.hintLockCell = null;
         }
         if (sameCell(cell, game.ghost)) return;
-        game.ghost = { x: cell.x, y: cell.y };
+        game.ghost = copyCell(cell);
         clampGhost();
         drawBoard();
       } else if (game.touch && cell) {
         if (!sameCell(cell, game.touch.start)) game.touch.moved = true;
-        game.ghost = { x: cell.x, y: cell.y };
+        game.ghost = copyCell(cell);
         clampGhost();
         drawBoard();
       }
@@ -1837,18 +1984,26 @@
 
     canvas.addEventListener('pointerdown', function (e) {
       if (!game.state) return;
+      // 立体：右键拖动、Shift+拖动，或没选棋子时拖动 = 旋转视角
+      if (isCube() && (e.button === 2 || (e.button === 0 && (e.shiftKey || game.sel.piece < 0 || !canAct())))) {
+        e.preventDefault();
+        var cam = game.view.cam || (game.view.cam = { yaw: View3D.DEFAULT_CAM.yaw, pitch: View3D.DEFAULT_CAM.pitch });
+        orbit = { x: e.clientX, y: e.clientY, yaw: cam.yaw, pitch: cam.pitch, button: e.button, shift: e.shiftKey, moved: false };
+        try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+        return;
+      }
       if (e.button === 2) { e.preventDefault(); rotate(1); return; }
       if (e.button === 1) { e.preventDefault(); flip(); return; }
       if (e.button !== 0) return;
       if (!canAct()) return;
-      var cell = game.view.cellAt(e.clientX, e.clientY, game.state.topo);
+      var cell = game.view.cellAt(e.clientX, e.clientY, game.state);
       if (game.sel.piece < 0) {
         toast('先在托盘里选一块棋子');
         return;
       }
       if (!cell) return;
       if (e.pointerType === 'mouse') {
-        game.ghost = { x: cell.x, y: cell.y };
+        game.ghost = copyCell(cell);
         game.hintLockCell = null;
         clampGhost();
         tryPlace();
@@ -1856,14 +2011,24 @@
       }
       e.preventDefault();
       try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
-      var prev = game.ghost && game.ghostByTap ? { x: game.ghost.x, y: game.ghost.y } : null;
-      game.ghost = { x: cell.x, y: cell.y };
+      var prev = game.ghost && game.ghostByTap ? copyCell(game.ghost) : null;
+      game.ghost = copyCell(cell);
       clampGhost();
       game.touch = { start: cell, prev: prev, moved: false };
       drawBoard();
     });
 
     canvas.addEventListener('pointerup', function (e) {
+      if (orbit) {
+        var o = orbit;
+        orbit = null;
+        if (!o.moved) {
+          if (o.button === 2) rotate(1);
+          else if (!o.shift && canAct() && game.sel.piece < 0) toast('先在托盘里选一块棋子；拖动可以旋转视角');
+        }
+        renderSelection();
+        return;
+      }
       if (e.pointerType === 'mouse' || !game.touch) return;
       var t = game.touch;
       game.touch = null;
@@ -1876,7 +2041,7 @@
       drawBoard();
     });
 
-    canvas.addEventListener('pointercancel', function () { game.touch = null; });
+    canvas.addEventListener('pointercancel', function () { game.touch = null; orbit = null; });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     canvas.addEventListener('wheel', function (e) {
       if (!canAct() || game.sel.piece < 0) return;
@@ -1888,15 +2053,18 @@
     }, { passive: false });
   }
 
-  function moveGhostBy(dx, dy) {
+  function moveGhostBy(dir) {
     var topo = game.state.topo;
     if (!game.ghost) {
       game.ghost = defaultGhost();
+    } else if (topo.kind === 'cube') {
+      var s = View3D.screenStep(game.view, dir);
+      game.ghost = { x: game.ghost.x + s[0], z: game.ghost.z + s[1] };
     } else {
-      var nx = game.ghost.x + dx, ny = game.ghost.y + dy;
-      if (topo.kind === 'tri') {
-        if (nx < 0 || ny < 0 || nx >= topo.cols || ny >= topo.rows || !topo.valid[ny * topo.cols + nx]) return;
-      }
+      var tri = topo.kind === 'tri';
+      var d = { left: [tri ? -2 : -1, 0], right: [tri ? 2 : 1, 0], up: [0, -1], down: [0, 1] }[dir];
+      var nx = game.ghost.x + d[0], ny = game.ghost.y + d[1];
+      if (tri && (nx < 0 || ny < 0 || nx >= topo.cols || ny >= topo.rows || !topo.valid[ny * topo.cols + nx])) return;
       game.ghost = { x: nx, y: ny };
     }
     game.hintLockCell = null;
@@ -1916,19 +2084,24 @@
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (key === 'r' || key === 'R') { rotate(e.shiftKey ? -1 : 1); return; }
-      if (key === 'e' || key === 'E') { rotate(-1); return; }
-      if (key === 'f' || key === 'F') { flip(); return; }
-      if (key === 'h' || key === 'H') { giveHint(); return; }
+      var cube = isCube();
+      var k = key.length === 1 ? key.toLowerCase() : key;
+      if (k === 'r') { rotate(e.shiftKey ? -1 : 1); return; }
+      if (k === 'f') { flip(); return; }
+      if (k === 'h') { giveHint(); return; }
+      if (cube) {
+        if (k === 'g') { roll(); return; }
+        if (k === 'q') { turnCamera(-1, 0); return; }
+        if (k === 'e') { turnCamera(1, 0); return; }
+      } else if (k === 'e') { rotate(-1); return; }
       if (key === 'Escape') {
         if (game.sel.piece >= 0) { game.sel.piece = -1; game.hint = null; renderDock(); drawBoard(); }
         return;
       }
-      var tri = game.state.topo.kind === 'tri';
-      var arrows = { ArrowLeft: [tri ? -2 : -1, 0], ArrowRight: [tri ? 2 : 1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-      if (arrows[key] && canAct() && game.sel.piece >= 0) {
+      var dirs = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
+      if (dirs[key] && canAct() && game.sel.piece >= 0) {
         e.preventDefault();
-        moveGhostBy(arrows[key][0], arrows[key][1]);
+        moveGhostBy(dirs[key]);
         return;
       }
       var focusOk = document.activeElement === document.body || document.activeElement === $('board');
@@ -2082,6 +2255,11 @@
     $('rot-ccw').addEventListener('click', function () { rotate(-1); });
     $('rot-cw').addEventListener('click', function () { rotate(1); });
     $('flip-btn').addEventListener('click', flip);
+    $('roll-btn').addEventListener('click', roll);
+    $('cam-left').addEventListener('click', function () { turnCamera(-1, 0); });
+    $('cam-right').addEventListener('click', function () { turnCamera(1, 0); });
+    $('cam-up').addEventListener('click', function () { turnCamera(0, 1); });
+    $('cam-down').addEventListener('click', function () { turnCamera(0, -1); });
     $('place-btn').addEventListener('click', tryPlace);
     $('resign-btn').addEventListener('click', resign);
 

@@ -38,6 +38,7 @@
           <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span>标准 20×20</span></label>
           <label><input type="radio" name="mode" id="mode-duo" value="duo"><span>双人 14×14</span></label>
           <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span>三角块 · 六边形</span></label>
+          <label><input type="radio" name="mode" id="mode-cube" value="cube"><span>立体 · 三维</span></label>
         </div>
         <p class="field-note" id="mode-note"></p>
       </div>
@@ -175,6 +176,12 @@
         <div class="board-wrap" id="board-wrap">
           <canvas id="board" tabindex="0" aria-label="棋盘"></canvas>
           <div class="toast" id="toast" role="status" hidden></div>
+          <div class="cam-ctl" id="cam-ctl" role="group" aria-label="视角" hidden>
+            <button type="button" class="btn icon" id="cam-left" title="视角向左转（Q）" aria-label="视角向左转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 4 0 1 1-8-4"/><path d="M12 4.5 12 8l3.5 1.5"/></svg></button>
+            <button type="button" class="btn icon" id="cam-up" title="抬高视角" aria-label="抬高视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+            <button type="button" class="btn icon" id="cam-down" title="放低视角" aria-label="放低视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+            <button type="button" class="btn icon" id="cam-right" title="视角向右转（E）" aria-label="视角向右转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 4 0 1 0 8-4"/><path d="M12 4.5 12 8l-3.5 1.5"/></svg></button>
+          </div>
         </div>
       </div>
 
@@ -189,6 +196,7 @@
             <button type="button" class="btn icon" id="rot-ccw" title="逆时针旋转（E）" aria-label="逆时针旋转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/></svg></button>
             <button type="button" class="btn icon" id="rot-cw" title="顺时针旋转（R / 右键 / 滚轮）" aria-label="顺时针旋转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 4.5V9h-4.5"/></svg></button>
             <button type="button" class="btn icon" id="flip-btn" title="翻转（F）" aria-label="翻转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 2.6"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/></svg></button>
+            <button type="button" class="btn icon" id="roll-btn" title="侧翻（G）" aria-label="侧翻" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18.5 3v4h-4"/><rect x="8" y="11" width="8" height="8" rx="1"/></svg></button>
             <button type="button" class="btn primary" id="place-btn" disabled>放置</button>
           </div>
         </div>
@@ -237,6 +245,14 @@
       <p><b>计分</b>：每个没放上去的格子扣 1 分；全部棋子放完加 15 分，如果最后一块是单格再加 5 分。分高者胜。</p>
       <p><b>标准 20×20</b>：21 块方块棋子（共 89 格），各自从棋盘的一个角出发。<b>双人 14×14</b>：两人从棋盘内侧的两个起点出发。</p>
       <p><b>三角块</b>：六边形棋盘由三角形格子组成，每人 22 块三角棋子（1–6 格，共 110 格），可旋转 6 个方向。棋盘上有 6 个公共起点，第一块盖住任意一个空着的起点即可；4 人用边长 9 的棋盘，3 人用 8，2 人用 7。</p>
+      <p><b>立体（原创三维玩法）</b>：在 7×7 的地面上往上搭，最多 5 层（3 人 6×6，2 人 5×5）。每人 12 块立方体棋子（1–4 个方块，共 41 块，镜像的两块算不同的棋子）。</p>
+      <ol>
+        <li>选好棋子和朝向后，指向地面上的某一列，棋子会从上方<b>竖直落下</b>，停在地面或任何人的棋子上。不能悬空，也不能超过限高。</li>
+        <li>第一块必须盖住自己在地面上的起始角。</li>
+        <li>之后每块都要和自己已有的棋子<b>棱或角相接</b>，但<b>不能面贴面</b>：所以不能直接叠在自己的棋子正上方。</li>
+        <li>可以叠在别人的棋子上，借道翻过对手的“墙”，也可以压住对手往上长的角。</li>
+      </ol>
+      <p>操作：R 水平转，F 前翻，G 侧翻；Q / E 或棋盘角落的按钮转视角，也可以拖动空白处旋转视角。</p>
       <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。</p>
       <p><b>操作</b>：点选托盘里的棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
     </div>
@@ -249,6 +265,7 @@
 <script src="js/pieces.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/ai.js"></script>
+<script src="js/view3d.js"></script>
 <script src="js/online.js"></script>
 <script src="js/net.js"></script>
 <script src="js/app.js"></script>

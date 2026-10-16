@@ -23,14 +23,22 @@ function config(mode, count) {
   return Engine.buildConfig(mode, seats.slice(0, n).map((s, i) => ({ seat: i })));
 }
 
+function moveKey(m) {
+  return m.z === undefined ? `${m.piece}/${m.orient}/${m.x}/${m.y}` : `${m.piece}/${m.orient}/${m.x}/${m.y}/${m.z}`;
+}
+
 function bruteForceMoves(state, p) {
   const out = [];
-  const { cols, rows } = state.topo;
+  const { cols, rows, dims, depth } = state.topo;
   state.set.pieces.forEach((piece, pi) => {
     piece.orients.forEach((o, oi) => {
       for (let y = -6; y < rows; y++) {
         for (let x = -12; x < cols; x++) {
-          if (Engine.checkPlacement(state, p, pi, oi, x, y) === null) out.push(`${pi}/${oi}/${x}/${y}`);
+          if (dims === 3) {
+            for (let z = -2; z < depth; z++) {
+              if (Engine.checkPlacement(state, p, pi, oi, x, y, z) === null) out.push(moveKey({ piece: pi, orient: oi, x, y, z }));
+            }
+          } else if (Engine.checkPlacement(state, p, pi, oi, x, y) === null) out.push(moveKey({ piece: pi, orient: oi, x, y }));
         }
       }
     });
@@ -148,12 +156,12 @@ test('同色只能角接、不能边接；异色可以边接', () => {
 });
 
 test('走法生成与暴力枚举完全一致（无重复、无遗漏）', () => {
-  for (const [mode, count, seed, rounds] of [['classic', 4, 1, 6], ['classic', 3, 2, 5], ['duo', 2, 3, 5], ['trigon', 4, 4, 6], ['trigon', 2, 5, 4]]) {
+  for (const [mode, count, seed, rounds] of [['classic', 4, 1, 6], ['classic', 3, 2, 5], ['duo', 2, 3, 5], ['trigon', 4, 4, 6], ['trigon', 2, 5, 4], ['cube', 4, 6, 9], ['cube', 2, 7, 6]]) {
     const rng = seeded(seed);
     const state = Engine.createGame(config(mode, count));
     for (let round = 0; round < rounds && !state.over; round++) {
       const p = state.current;
-      const fast = Engine.legalMoves(state, p).map((m) => `${m.piece}/${m.orient}/${m.x}/${m.y}`).sort();
+      const fast = Engine.legalMoves(state, p).map(moveKey).sort();
       assert.equal(new Set(fast).size, fast.length, 'duplicate moves');
       assert.deepEqual(fast, bruteForceMoves(state, p), `${mode} round ${round}`);
       playRandomly(state, rng, 1 + Math.floor(rng() * 5));
@@ -162,7 +170,7 @@ test('走法生成与暴力枚举完全一致（无重复、无遗漏）', () =>
 });
 
 test('随机对局能正常结束，重放结果一致', () => {
-  for (const [mode, count, seed] of [['classic', 4, 11], ['classic', 2, 12], ['duo', 2, 13], ['trigon', 4, 14], ['trigon', 3, 15]]) {
+  for (const [mode, count, seed] of [['classic', 4, 11], ['classic', 2, 12], ['duo', 2, 13], ['trigon', 4, 14], ['trigon', 3, 15], ['cube', 4, 16], ['cube', 2, 17]]) {
     const cfg = config(mode, count);
     const state = Engine.createGame(cfg);
     playRandomly(state, seeded(seed), 2000);
@@ -176,6 +184,58 @@ test('随机对局能正常结束，重放结果一致', () => {
     const placed = state.players.reduce((s, pl) => s + (state.set.total - pl.remainingSquares), 0);
     assert.equal(filled, placed);
   }
+});
+
+test('立体：12 块立方体棋子共 41 格，105 种朝向，转动可达全部朝向', () => {
+  const set = Pieces.SETS.cube;
+  assert.equal(set.count, 12);
+  assert.equal(set.total, 41);
+  assert.equal(set.pieces.reduce((s, p) => s + p.orients.length, 0), 105);
+  // 一对互为镜像的扭转块是两块不同的棋子
+  assert.ok(set.pieces.some((p) => p.name === '左旋') && set.pieces.some((p) => p.name === '右旋'));
+  set.pieces.forEach((p, pi) => {
+    const seen = new Set([p.display]);
+    const queue = [p.display];
+    while (queue.length) {
+      const o = queue.pop();
+      for (let a = 0; a < 3; a++) for (const d of [1, -1]) {
+        const n = set.turn(pi, o, a, d);
+        if (!seen.has(n)) { seen.add(n); queue.push(n); }
+      }
+    }
+    assert.equal(seen.size, p.orients.length, p.name);
+  });
+});
+
+test('立体：棋子竖直落下，不能悬空、不能超过限高、不能和自己面贴面', () => {
+  const state = Engine.createGame(config('cube'));
+  const topo = state.topo;
+  assert.equal(topo.n, 7 * 7 * 5);
+  const ii = state.set.pieces.findIndex((p) => p.name === '二连');
+  const flat = state.set.pieces[ii].orients.findIndex((o) => o.w === 2);
+  const tall = state.set.pieces[ii].orients.findIndex((o) => o.h === 2);
+  assert.equal(Engine.checkPlacement(state, 0, ii, flat, 0, 1, 0), 'float');
+  assert.equal(Engine.checkPlacement(state, 0, ii, flat, 1, 0, 0), 'start');
+  assert.equal(Engine.applyAction(state, { type: 'place', piece: ii, orient: flat, x: 0, y: 0, z: 0 }), null);
+  assert.equal(state.actions[0].z, 0);
+  // 其余三方各在自己的角落一块单块
+  const mono = 0;
+  for (const [x, z] of [[6, 0], [6, 6], [0, 6]]) {
+    assert.equal(Engine.applyAction(state, { type: 'place', piece: mono, orient: 0, x, y: 0, z }), null);
+  }
+  // 叠在自己的棋子正上方 = 面贴面
+  assert.equal(Engine.dropY(state, mono, 0, 0, 0), 1);
+  assert.equal(Engine.checkPlacement(state, 0, mono, 0, 0, 1, 0), 'edge');
+  // 棱相接（斜上方）合法
+  assert.equal(Engine.checkPlacement(state, 0, mono, 0, 2, 0, 1), null);
+  assert.equal(Engine.checkPlacement(state, 0, mono, 0, 2, 0, 0), 'edge');
+  assert.equal(Engine.checkPlacement(state, 0, mono, 0, 4, 0, 4), 'corner');
+  // 竖着的二连叠到 4 层后再放就超高
+  const tower = Engine.createGame(config('cube'));
+  for (let y = 0; y < 4; y++) tower.board[Engine.cellIndex(tower.topo, [3, y, 3])] = 2;
+  assert.equal(Engine.dropY(tower, ii, tall, 3, 3), -1);
+  assert.equal(Engine.dropY(tower, ii, tall, 3, 3, true), 4);
+  assert.equal(Engine.checkPlacement(tower, 0, ii, tall, 3, 4, 3), 'ceiling');
 });
 
 test('旧存档（start 字段、无 mode）仍可读取', () => {
@@ -206,7 +266,7 @@ test('排名并列时名次相同', () => {
 });
 
 test('三档电脑在两种棋盘上都只走合法棋步', () => {
-  for (const mode of ['classic', 'trigon']) {
+  for (const mode of ['classic', 'trigon', 'cube']) {
     for (const level of ['easy', 'normal', 'hard']) {
       const state = Engine.createGame(config(mode));
       const rng = seeded(level.length + mode.length);
