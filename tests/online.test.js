@@ -131,7 +131,7 @@ test('房间号格式', () => {
 function sseClient(base, code, token) {
   const ctrl = new AbortController();
   const listeners = [];
-  const client = { room: null, pid: null, peers: [], close: () => ctrl.abort() };
+  const client = { room: null, pid: null, peers: [], previews: [], close: () => ctrl.abort() };
   client.waitFor = (pred, ms = 8000) => new Promise((resolve, reject) => {
     if (pred(client)) return resolve(client);
     const timer = setTimeout(() => reject(new Error('timeout waiting for room state')), ms);
@@ -156,6 +156,7 @@ function sseClient(base, code, token) {
             if (ev[1] === 'room') client.room = value;
             if (ev[1] === 'hello') client.pid = value.pid;
             if (ev[1] === 'peers') client.peers = value;
+            if (ev[1] === 'preview') client.previews.push(value);
             for (let k = listeners.length - 1; k >= 0; k--) if (listeners[k]()) listeners.splice(k, 1);
           }
         }
@@ -167,7 +168,8 @@ function sseClient(base, code, token) {
 
 async function post(base, url, body) {
   const res = await fetch(base + url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  return { status: res.status, body: await res.json() };
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
 test('服务器：两名玩家 + 两个电脑完整打完一局', async (t) => {
@@ -211,6 +213,18 @@ test('服务器：两名玩家 + 两个电脑完整打完一局', async (t) => {
   r = await post(base, `/api/rooms/${code}/op`, { token: tokA, op: { type: 'start' } });
   assert.equal(r.status, 200);
   await a.waitFor((c) => c.room.status !== 'lobby');
+
+  // 正在尝试的位置：只有当前玩家能发，其他人实时收到，不进房间记录
+  const pv = { at: 0, piece: 3, orient: 1, x: 0, y: 0 };
+  assert.equal((await post(base, `/api/rooms/${code}/preview`, { token: tokB, preview: pv })).status, 409);
+  assert.equal((await post(base, `/api/rooms/${code}/preview`, { token: tokA, preview: { at: 'x' } })).status, 400);
+  assert.equal((await post(base, `/api/rooms/${code}/preview`, { token: tokA, preview: pv })).status, 204);
+  await b.waitFor((c) => c.previews.length === 1);
+  assert.deepEqual(b.previews[0], { pid: a.pid, preview: pv });
+  assert.equal(a.previews.length, 0);
+  assert.equal((await post(base, `/api/rooms/${code}/preview`, { token: tokA, preview: null })).status, 204);
+  await b.waitFor((c) => c.previews.length === 2 && c.previews[1].preview === null);
+  assert.equal(b.room.game.actions.length, 0);
 
   const tokens = { [a.pid]: tokA, [b.pid]: tokB };
   for (let guard = 0; guard < 400; guard++) {

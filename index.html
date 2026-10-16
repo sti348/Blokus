@@ -176,11 +176,20 @@
         <div class="board-wrap" id="board-wrap">
           <canvas id="board" tabindex="0" aria-label="棋盘"></canvas>
           <div class="toast" id="toast" role="status" hidden></div>
-          <div class="cam-ctl" id="cam-ctl" role="group" aria-label="视角" hidden>
+          <div class="cam-ctl" id="cam-ctl" role="group" aria-label="视角与透视" hidden>
+            <div class="cam-row">
             <button type="button" class="btn icon" id="cam-left" title="视角向左转（Q）" aria-label="视角向左转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 4 0 1 1-8-4"/><path d="M12 4.5 12 8l3.5 1.5"/></svg></button>
             <button type="button" class="btn icon" id="cam-up" title="抬高视角" aria-label="抬高视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
             <button type="button" class="btn icon" id="cam-down" title="放低视角" aria-label="放低视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
             <button type="button" class="btn icon" id="cam-right" title="视角向右转（E）" aria-label="视角向右转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 4 0 1 0 8-4"/><path d="M12 4.5 12 8l-3.5 1.5"/></svg></button>
+            </div>
+            <div class="cam-row">
+              <button type="button" class="btn icon toggle" id="xray-btn" aria-pressed="false" title="透视：所有方块半透明（X）" aria-label="透视"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+              <label class="layer-ctl" title="只显示下面几层（[ 与 ]）">层
+                <input type="range" id="layer-range" min="1" max="5" value="5" step="1" aria-label="显示到第几层">
+                <span id="layer-val">全部</span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -189,6 +198,7 @@
         <div class="dock-head">
           <span class="dock-title" id="dock-title"></span>
           <span class="dock-count" id="dock-count"></span>
+          <button type="button" class="btn ghost" id="dock-back" hidden>看自己的</button>
         </div>
         <div class="selected">
           <div class="sel-preview" id="sel-preview" aria-live="polite"></div>
@@ -253,7 +263,9 @@
         <li>可以叠在别人的棋子上，借道翻过对手的“墙”，也可以压住对手往上长的角。</li>
       </ol>
       <p>操作：R 水平转，F 前翻，G 侧翻；Q / E 或棋盘角落的按钮转视角，也可以拖动空白处旋转视角。</p>
-      <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。</p>
+      <p><b>透视</b>：挡住待放棋子的方块会自动变淡；按 X 或眼睛按钮打开 X 光，所有方块半透明；用 [ ] 或滑块只看下面几层。</p>
+      <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。轮到别人时，你能实时看到他正在尝试的位置（虚线轮廓）。</p>
+      <p><b>剩余棋子</b>：每位玩家卡片上的小图标就是他还剩的棋子，点卡片可在托盘里看大图。</p>
       <p><b>操作</b>：点选托盘里的棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
     </div>
     <div class="dialog-actions">

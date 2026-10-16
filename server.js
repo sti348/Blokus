@@ -9,6 +9,7 @@
  *   POST /api/rooms                    建房  { token, name, mode } -> { code }
  *   GET  /api/rooms/:code/stream       SSE 推送房间状态（?token=）
  *   POST /api/rooms/:code/op           房间操作 { token, op }
+ *   POST /api/rooms/:code/preview      当前玩家正在尝试的位置 { token, preview }（只转发，不保存）
  * 服务器用规则引擎校验每一步，并负责电脑玩家的回合。
  */
 'use strict';
@@ -170,6 +171,47 @@ function stream(req, res, entry, token) {
   });
 }
 
+// 当前玩家正在尝试的位置：只转发给房间里的其他人，不保存
+const previewTimes = new Map();
+function cleanPreview(p) {
+  if (p === null) return null;
+  if (!p || typeof p !== 'object') return undefined;
+  const out = {};
+  for (const k of ['at', 'piece', 'orient', 'x', 'y', 'z']) {
+    if (p[k] === undefined && k === 'z') continue;
+    if (!Number.isInteger(p[k]) || Math.abs(p[k]) > 1000) return undefined;
+    out[k] = p[k];
+  }
+  return out;
+}
+
+async function roomPreview(req, res, entry) {
+  const body = await readJson(req);
+  if (!validToken(body.token)) return sendJson(res, 400, { error: '缺少身份信息，请刷新页面' });
+  const pid = pidOf(body.token);
+  const room = entry.room;
+  if (room.status !== 'playing') return sendJson(res, 409, { error: '对局不在进行中', code: 'not_playing' });
+  const preview = cleanPreview(body.preview);
+  if (preview === undefined) return sendJson(res, 400, { error: 'bad preview' });
+  const st = Online.gameState(room);
+  const pl = room.game.config.players[st.current];
+  if (!pl || pl.type !== 'human' || pl.owner !== pid) {
+    // 回合结束后发来的“清空”无需转发：其他人按回合号自动忽略旧位置
+    if (preview === null) { res.writeHead(204); res.end(); return; }
+    return sendJson(res, 409, { error: '还没轮到你', code: 'not_your_turn' });
+  }
+  // 每人每秒最多 20 次
+  const now = Date.now();
+  const last = previewTimes.get(pid) || [];
+  const recent = last.filter((t) => now - t < 1000);
+  if (recent.length >= 20) return sendJson(res, 429, { error: 'too many' });
+  recent.push(now);
+  previewTimes.set(pid, recent);
+  for (const c of entry.clients) if (c.pid !== pid) sse(c.res, 'preview', { pid, preview });
+  res.writeHead(204, { 'Cache-Control': 'no-store' });
+  res.end();
+}
+
 async function roomOp(req, res, entry) {
   const body = await readJson(req);
   if (!validToken(body.token)) return sendJson(res, 400, { error: '缺少身份信息，请刷新页面' });
@@ -216,7 +258,7 @@ async function handle(req, res) {
       ? sendJson(res, 200, { code: one[1].toUpperCase() })
       : sendJson(res, 404, { error: '房间不存在或已解散', code: 'no_room' });
   }
-  const m = /^\/api\/rooms\/([A-Za-z0-9]{5})\/(stream|op)$/.exec(p);
+  const m = /^\/api\/rooms\/([A-Za-z0-9]{5})\/(stream|op|preview)$/.exec(p);
   if (m) {
     const entry = rooms.get(m[1].toUpperCase());
     if (!entry) return sendJson(res, 404, { error: '房间不存在或已解散', code: 'no_room' });
@@ -226,6 +268,7 @@ async function handle(req, res) {
       return stream(req, res, entry, token);
     }
     if (m[2] === 'op' && req.method === 'POST') return roomOp(req, res, entry);
+    if (m[2] === 'preview' && req.method === 'POST') return roomPreview(req, res, entry);
     return sendJson(res, 405, { error: 'method not allowed' });
   }
   if (p.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' });

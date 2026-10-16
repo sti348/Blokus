@@ -453,6 +453,13 @@
       g.globalAlpha = 1;
     }
 
+    // 其他玩家正在尝试的位置（联机）
+    if (ov.remote) {
+      var rm = ov.remote;
+      rm.cells.forEach(function (i) { self.drawCell(L, i, rm.color, 0.42); });
+      this.outline(L, rm.cells, rm.color, Math.max(1.5, L.inr * 0.22), [L.k * 0.22, L.k * 0.14]);
+    }
+
     // 待放置棋子
     if (ov.ghost) {
       var gh = ov.ghost;
@@ -844,6 +851,7 @@
     game.paused = false;
     game.anim = null;
     game.turnKey = '';
+    game.viewPlayer = null;
     resetSelection();
     showScreen('game');
     if (game.trayKind !== game.state.set.kind) buildTray();
@@ -858,8 +866,30 @@
     renderGame();
   }
 
+  function setXray(on) {
+    if (!game.view) return;
+    game.view.xray = !!on;
+    $('xray-btn').setAttribute('aria-pressed', on ? 'true' : 'false');
+    drawBoard();
+  }
+
+  function setSlice(n) {
+    if (!game.view || !isCube()) return;
+    var H = game.state.topo.height;
+    n = clamp(Math.round(n), 1, H);
+    game.view.slice = n >= H ? null : n;
+    $('layer-range').value = n;
+    $('layer-val').textContent = n >= H ? '全部' : '1–' + n + ' 层';
+    drawBoard();
+  }
+
   function applyModeControls() {
     var cube = isCube();
+    if (cube && game.view) {
+      $('layer-range').max = game.state.topo.height;
+      setSlice(game.state.topo.height);
+      $('xray-btn').setAttribute('aria-pressed', game.view.xray ? 'true' : 'false');
+    }
     $('cam-ctl').hidden = !cube;
     $('board-wrap').classList.toggle('cube', cube);
     $('roll-btn').hidden = !cube;
@@ -867,7 +897,7 @@
     $('rot-cw').title = cube ? '水平向右转（R / 滚轮）' : '顺时针旋转（R / 右键 / 滚轮）';
     $('flip-btn').title = cube ? '向前翻（F）' : '翻转（F）';
     $('keys-help').textContent = cube
-      ? '点选棋子，指向一列后点击让它落下 · R 水平转 · F 前翻 · G 侧翻 · Q / E 转视角 · 拖动空白处或右键拖动旋转视角'
+      ? '点选棋子，指向一列后点击让它落下 · R 水平转 · F 前翻 · G 侧翻 · Q / E 转视角 · X 透视 · [ ] 切层 · 拖动空白处旋转视角'
       : '点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消';
   }
 
@@ -904,6 +934,7 @@
     }
     var pl = cur();
     if (canAct()) {
+      game.viewPlayer = null;
       game.perPiece = Engine.movesPerPiece(st, st.current);
       var forb = Engine.forbiddenMask(st.board, st.topo, st.current);
       game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb);
@@ -1146,14 +1177,46 @@
     return { x: best % topo.cols, y: Math.floor(best / topo.cols) };
   }
 
+  // 联机时当前玩家（不是自己）正在尝试的位置；内容来自别人，先校验再用
+  function remotePreview() {
+    if (!isOnlineGame() || !online.previews || canAct()) return null;
+    var st = game.state;
+    if (st.over) return null;
+    var pl = cur();
+    if (pl.type !== 'human' || !pl.owner) return null;
+    var pv = online.previews[pl.owner];
+    if (!pv || pv.at !== st.actions.length) return null;
+    var piece = Number.isInteger(pv.piece) ? st.set.pieces[pv.piece] : null;
+    if (!piece || !Number.isInteger(pv.orient) || !piece.orients[pv.orient]) return null;
+    var coords = st.topo.dims === 3 ? [pv.x, pv.y, pv.z] : [pv.x, pv.y];
+    if (!coords.every(function (v) { return Number.isInteger(v) && Math.abs(v) <= 64; })) return null;
+    return pv;
+  }
+
+  function remotePreviewSafe() { return game.state && isOnlineGame() ? remotePreview() : null; }
+
   function gameOverlay() {
     var st = game.state;
     var ov = { lastMove: st.lastMove ? cellsToIdx(st, st.lastMove.cells) : null, anim: game.anim };
+    var topo = st.topo;
+    var cube = topo.kind === 'cube';
+    if (cube && game.view) {
+      ov.slice = game.view.slice;
+      ov.xray = game.view.xray;
+    }
+    var rp = remotePreview();
+    if (rp) {
+      var rcolor = palette.colors[cur().color];
+      var rcells = Engine.placementCells(st, rp.piece, rp.orient, rp.x, rp.y, rp.z);
+      ov.remote = {
+        cells: cube ? rcells : cellsToIdx(st, rcells.filter(function (c) { return Engine.inBounds(topo, c); })),
+        color: rcolor,
+        valid: Engine.checkPlacement(st, st.current, rp.piece, rp.orient, rp.x, rp.y, rp.z) === null
+      };
+    }
     if (!canAct()) return ov;
     var pl = cur();
     var color = palette.colors[pl.color];
-    var topo = st.topo;
-    var cube = topo.kind === 'cube';
     if (prefs.hints && game.anchors) ov.anchors = { list: game.anchorDots || game.anchors.list, color: color };
     if (game.hint) {
       var h = game.hint;
@@ -1365,6 +1428,7 @@
           } else more = true;
         }
         game.view.draw(now);
+        syncPreview();
         if (game.anim || (game.hint && !REDUCED_MOTION && canAct())) more = true;
       }
       if (demo.view && !$('setup').hidden) {
@@ -1386,6 +1450,34 @@
     if (game.hint && !REDUCED_MOTION) animate();
     else if (game.view) game.view.draw();
     updatePlaceButton();
+    syncPreview();
+  }
+
+  // 联机：把自己正在尝试的位置实时告诉其他人（最多约每 90ms 一次，内容不变不发）
+  function syncPreview() {
+    if (!isOnlineGame() || !online.net.preview) return;
+    var pv = null;
+    if (canAct()) {
+      var m = ghostMove();
+      if (m) {
+        pv = { at: game.state.actions.length, piece: m.piece, orient: m.orient, x: m.x, y: m.y };
+        if (m.z !== undefined) pv.z = m.z;
+      }
+    }
+    var key = JSON.stringify(pv);
+    online.pvWant = pv;
+    online.pvKey = key;
+    if (key === online.pvSent || online.pvTimer) return;
+    online.pvTimer = setTimeout(flushPreview, Math.max(0, 90 - (Date.now() - (online.pvAt || 0))));
+  }
+
+  function flushPreview() {
+    if (!online) return;
+    online.pvTimer = 0;
+    if (online.pvKey === online.pvSent) return;
+    online.pvSent = online.pvKey;
+    online.pvAt = Date.now();
+    online.net.preview(online.pvWant);
   }
 
   function renderGame() {
@@ -1411,7 +1503,10 @@
       var pl = cur();
       color = colorVar(pl);
       if (canAct()) text = !onlineMode && humanCount() > 1 ? '轮到 ' + pl.name + '（' + pl.label + '方）' : '轮到你了（' + pl.label + '方）';
-      else if (pl.type === 'human') text = '等待 ' + pl.name + '（' + pl.label + '方）落子' + (onlineMode && !isPeerOnline(pl.owner) ? ' · 已离线' : '');
+      else if (pl.type === 'human') {
+        text = '等待 ' + pl.name + '（' + pl.label + '方）落子' +
+          (onlineMode && !isPeerOnline(pl.owner) ? ' · 已离线' : remotePreview() ? ' · 正在尝试摆放' : '');
+      }
       else text = pl.name + (game.paused ? ' · 已暂停' : ' 思考中…');
     }
     root.style.setProperty('--turn', color);
@@ -1439,11 +1534,29 @@
     }
   }
 
+  function trayOrder(set) {
+    return set.pieces.map(function (p) { return p.index; })
+      .sort(function (a, b) { return set.pieces[b].size - set.pieces[a].size || a - b; });
+  }
+
+  // 棋子小图标（颜色来自外层的 --c，所以与玩家无关，可以缓存）
+  var miniCache = {};
+  function pieceIcon(set, pi) {
+    var key = set.kind + ':' + pi;
+    if (!miniCache[key]) {
+      var piece = set.pieces[pi];
+      miniCache[key] = set.kind === 'cube' ? View3D.pieceSVG(piece.orients[piece.display], null, 4.2) : pieceSVG(piece.orients[piece.display], set.maxBox);
+    }
+    return miniCache[key];
+  }
+
   function renderPlayers() {
     var st = game.state;
     var onlineMode = isOnlineGame();
     var amHost = onlineMode && online.room && online.room.host === myId();
     var total = st.set.total;
+    var order = trayOrder(st.set);
+    var viewing = dockOwner() !== trayOwner() ? dockOwner() : null;
     $('players').innerHTML = st.players.map(function (pl, p) {
       var current = !st.over && p === st.current;
       var stateText;
@@ -1462,11 +1575,18 @@
       var score = Engine.scoreOf(pl);
       var placed = total - pl.remainingSquares;
       var kind = pl.type === 'human' ? (onlineMode && pl.owner === myId() ? '你' : '玩家') : '电脑 · ' + LEVEL_LABEL[pl.level];
-      return '<div class="pcard' + (current ? ' current' : '') + (pl.done ? ' done' : '') + '" style="--c:' + colorVar(pl) + '">' +
+      var pieces = order.map(function (pi) {
+        return '<i' + (pl.remaining[pi] ? '' : ' class="used"') + '>' + pieceIcon(st.set, pi) + '</i>';
+      }).join('');
+      var left = pl.remaining.filter(Boolean).length;
+      return '<div class="pcard' + (current ? ' current' : '') + (pl.done ? ' done' : '') + (viewing === pl ? ' viewing' : '') +
+        '" style="--c:' + colorVar(pl) + '" data-player="' + p + '" role="button" tabindex="0"' +
+        ' title="点击在托盘里查看剩余棋子" aria-label="' + escapeHtml(pl.name) + '，剩 ' + left + ' 块，点击查看">' +
         '<span class="pcard-swatch" aria-hidden="true"></span>' +
         '<div class="pcard-name">' + dot + escapeHtml(pl.name) + '<small>' + pl.label + '方 · ' + kind + '</small></div>' +
         '<div class="pcard-score" title="当前得分">' + (score > 0 ? '+' : '') + score + '<small>已放 ' + placed + ' 格</small></div>' +
         '<div class="pcard-bar" aria-hidden="true"><i style="--w:' + (placed / total * 100).toFixed(1) + '%"></i></div>' +
+        '<div class="pcard-pieces" aria-hidden="true">' + pieces + '</div>' +
         '<div class="pcard-state">' + stateText + '</div>' +
         '</div>';
     }).join('');
@@ -1475,8 +1595,7 @@
   function buildTray() {
     var set = game.state.set;
     game.trayKind = set.kind;
-    var order = set.pieces.map(function (p) { return p.index; })
-      .sort(function (a, b) { return set.pieces[b].size - set.pieces[a].size || a - b; });
+    var order = trayOrder(set);
     var tray = $('tray');
     tray.innerHTML = '';
     order.forEach(function (pi) {
@@ -1494,14 +1613,28 @@
     });
   }
 
+  // 托盘里显示谁的棋子：点了玩家卡片就看那位玩家，否则看自己
+  function dockOwner() {
+    var pl = game.viewPlayer != null ? game.state.players[game.viewPlayer] : null;
+    return pl || trayOwner();
+  }
+
+  function viewPlayerPieces(p) {
+    game.viewPlayer = game.viewPlayer === p || game.state.players[p] === trayOwner() ? null : p;
+    renderPlayers();
+    renderDock();
+  }
+
   function renderDock() {
     var st = game.state;
-    var owner = trayOwner();
+    var owner = dockOwner();
+    var browsing = owner !== trayOwner();
     var active = canAct() && owner === cur();
     var dock = $('dock');
     dock.classList.toggle('inactive', !active);
     dock.style.setProperty('--c', colorVar(owner));
-    $('dock-title').textContent = owner.label + '方 · ' + owner.name + (active || st.over ? '' : owner.type === 'ai' ? '（电脑）' : '（等待中）');
+    $('dock-title').textContent = owner.label + '方 · ' + owner.name + (browsing ? ' 的棋子' : active || st.over ? '' : owner.type === 'ai' ? '（电脑）' : '（等待中）');
+    $('dock-back').hidden = !browsing;
     var left = owner.remaining.filter(Boolean).length;
     $('dock-count').textContent = '剩 ' + left + ' 块 · ' + owner.remainingSquares + ' 格';
     var set = st.set;
@@ -1736,17 +1869,26 @@
         hostMissingSince: 0,
         hostTried: -1,
         autoClaim: !(opts && opts.autoClaim === false),
-        tick: setInterval(onlineTick, 3000)
+        tick: setInterval(onlineTick, 3000),
+        previews: {},
+        pvSent: 'null'
       };
       save(STORE_ONLINE, { code: code });
       var session = online;
       function live(fn) {
-        return function (x) { if (online === session) fn(x); };
+        return function () { if (online === session) fn.apply(null, arguments); };
       }
       net.connect(code, token, {
         onIdentity: live(function (id) { online.pid = id; renderOnlineViews(); }),
         onRoom: live(onRoom),
         onPeers: live(function (ids) { online.peers = ids; renderOnlineViews(); maybeRunAI(); }),
+        onPreview: live(function (id, pv) {
+          var had = !!remotePreviewSafe();
+          online.previews[id] = pv;
+          if ($('game').hidden || !game.state) return;
+          if (had !== !!remotePreviewSafe()) renderTurn();
+          drawBoard();
+        }),
         onConnection: live(function (c) { online.connected = c; renderOnlineViews(); }),
         onGone: live(function () {
           closeSession(true);
@@ -1835,6 +1977,7 @@
     online = null;
     clearInterval(o.tick);
     clearTimeout(o.aiTimer);
+    clearTimeout(o.pvTimer);
     o.net.disconnect();
     if (!notify) o.net.opAt(o.code, o.token, { type: 'leave' }).catch(function () {});
     game.mode = 'local';
@@ -2090,6 +2233,9 @@
       if (k === 'f') { flip(); return; }
       if (k === 'h') { giveHint(); return; }
       if (cube) {
+        if (k === 'x') { setXray(!(game.view && game.view.xray)); return; }
+        if (k === '[') { setSlice(+$('layer-range').value - 1); return; }
+        if (k === ']') { setSlice(+$('layer-range').value + 1); return; }
         if (k === 'g') { roll(); return; }
         if (k === 'q') { turnCamera(-1, 0); return; }
         if (k === 'e') { turnCamera(1, 0); return; }
@@ -2235,8 +2381,26 @@
     });
     $('players').addEventListener('click', function (e) {
       var b = e.target.closest('[data-takeover]');
-      if (b) sendOp({ type: 'takeover', player: +b.dataset.takeover }).catch(function () {});
+      if (b) {
+        sendOp({ type: 'takeover', player: +b.dataset.takeover }).catch(function () {});
+        return;
+      }
+      var card = e.target.closest('.pcard');
+      if (card && game.state) viewPlayerPieces(+card.dataset.player);
     });
+    $('players').addEventListener('keydown', function (e) {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('pcard')) {
+        e.preventDefault();
+        viewPlayerPieces(+e.target.dataset.player);
+      }
+    });
+    $('dock-back').addEventListener('click', function () {
+      game.viewPlayer = null;
+      renderPlayers();
+      renderDock();
+    });
+    $('xray-btn').addEventListener('click', function () { setXray(!(game.view && game.view.xray)); });
+    $('layer-range').addEventListener('input', function (e) { setSlice(+e.target.value); });
     $('hint-btn').addEventListener('click', giveHint);
     $('undo-btn').addEventListener('click', undo);
     $('pause-btn').addEventListener('click', function () {

@@ -6,6 +6,7 @@
  *
  * connect(code, token, handlers) 的回调：
  *   onIdentity(id) onRoom(room) onPeers(ids|null) onConnection(bool) onGone() onError(msg)
+ *   onPreview(id, preview|null) —— 其他玩家正在尝试的位置（不保存，只实时转发）
  */
 (function (root) {
   'use strict';
@@ -89,6 +90,10 @@
       if (room) h.onRoom(room);
     });
     es.addEventListener('peers', function (e) { h.onPeers(JSON.parse(e.data)); });
+    es.addEventListener('preview', function (e) {
+      var d = JSON.parse(e.data);
+      if (d && typeof d.pid === 'string') h.onPreview(d.pid, d.preview || null);
+    });
     es.onopen = function () { h.onConnection(true); };
     es.onerror = function () {
       if (self.es !== es) return;
@@ -110,6 +115,11 @@
 
   ServerNet.prototype.opAt = function (code, token, op) {
     return this.request('POST', 'api/rooms/' + code + '/op', { token: token, op: op });
+  };
+
+  ServerNet.prototype.preview = function (preview) {
+    if (!this.code) return Promise.resolve();
+    return this.request('POST', 'api/rooms/' + this.code + '/preview', { token: this.token, preview: preview }).catch(function () {});
   };
 
   ServerNet.prototype.disconnect = function () {
@@ -211,6 +221,12 @@
           .filter(function (x) { return typeof x === 'string' && x.length < 80; }));
         self.online = ids;
         h.onPeers(ids);
+        // 正在尝试的位置放在在线状态里，随鼠标移动实时更新
+        change.peers.forEach(function (p) {
+          var pr = p.presence || {};
+          if (p.sameTab || typeof pr.pid !== 'string') return;
+          h.onPreview(pr.pid, pr.pv && typeof pr.pv === 'object' ? pr.pv : null);
+        });
       });
       named.onConnection(function (c) { h.onConnection(c); });
     }, function () { /* 没有在线状态时照常可玩 */ });
@@ -232,6 +248,11 @@
         return ref.set(res.room).then(function () { return { ok: true, rev: res.room.rev }; });
       });
     });
+  };
+
+  ArtifactNet.prototype.preview = function (preview) {
+    if (!this.named) return Promise.resolve();
+    return this.named.presence({ pid: this.token, pv: preview }).catch(function () {});
   };
 
   ArtifactNet.prototype.disconnect = function () {

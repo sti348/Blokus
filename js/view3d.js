@@ -139,7 +139,7 @@
       g.strokeStyle = opts.stroke || sh.edge;
       g.lineWidth = opts.strokeWidth || Math.max(0.6, L.k * 0.03);
       g.stroke();
-      if (face === 'top' && !opts.tint) {
+      if (face === 'top' && !opts.tint && !opts.noNub) {
         // 顶面的小凸台：棋子的塑料质感
         var cx = x + 0.5, cz = z + 0.5, s = 0.2;
         pathPts(g, [[cx - s, cz - s], [cx + s, cz - s], [cx + s, cz + s], [cx - s, cz + s]].map(function (p) { return proj(L, p[0], y + 1, p[1]); }));
@@ -245,7 +245,15 @@
     }
     var lastSet = {};
     (ov.lastMove || []).forEach(function (i) { lastSet[i] = 1; });
-    function occ(i) { return board[i] !== EMPTY && !animSet[i]; }
+
+    // 透视：只显示到第 slice 层；X 光让所有方块半透明；挡住待放棋子的方块自动变淡
+    var slice = ov.slice != null ? Math.max(1, Math.min(H, ov.slice)) : H;
+    var xray = !!ov.xray;
+    var fade = fadeSet(L, topo, board, [ov.ghost, ov.remote]);
+    function occ(i) {
+      return board[i] !== EMPTY && !animSet[i] && !fade[i] && Math.floor(i / layer) < slice && !xray;
+    }
+
     var items = [];
     for (var i = 0; i < board.length; i++) {
       if (board[i] < 0 || animSet[i]) continue;
@@ -263,6 +271,7 @@
     if (ov.anchors) {
       ov.anchors.list.forEach(function (i) {
         var c = coordOf(topo, i);
+        if (c[1] > slice) return;
         items.push({ d: depthOf(L, c[0] + 0.5, c[1], c[2] + 0.5) + 0.001, kind: 'dot', c: c });
       });
     }
@@ -284,17 +293,31 @@
         return;
       }
       var x = it.c[0], y = it.c[1], z = it.c[2];
+      var color = colorOf(board[it.i]);
+      if (y >= slice) {
+        // 被切掉的楼层只留一点影子，提醒上面还有东西
+        drawCube(g, L, it.c, color, { alpha: 0.07, noNub: true });
+        return;
+      }
       var hide = {};
       if (y + 1 < H && occ(it.i + layer)) hide.top = true;
       var nx = x + vis.sx, nz = z + vis.sz;
       if (nx >= 0 && nx < W && occ(it.i + vis.sx)) hide[faceX] = true;
       if (nz >= 0 && nz < D && occ(it.i + vis.sz * W)) hide[faceZ] = true;
       var opts = { hide: hide };
+      if (fade[it.i]) {
+        opts.alpha = 0.2;
+        opts.noNub = true;
+      } else if (xray) {
+        opts.alpha = 0.34;
+        opts.stroke = shades(color).edge;
+        opts.strokeWidth = Math.max(1, L.k * 0.045);
+      }
       if (lastSet[it.i]) {
         opts.stroke = palette.ink;
         opts.strokeWidth = Math.max(1.4, L.k * 0.06);
       }
-      drawCube(g, L, it.c, colorOf(board[it.i]), opts);
+      drawCube(g, L, it.c, color, opts);
     });
 
     // 提示：虚线框
@@ -313,29 +336,84 @@
       g.restore();
     }
 
-    // 待放置的棋子：半透明，始终画在最上层
-    if (ov.ghost) {
-      var gh = ov.ghost;
-      var cells = gh.cells.slice().sort(function (a, b) {
-        return depthOf(L, a[0] + 0.5, a[1] + 0.5, a[2] + 0.5) - depthOf(L, b[0] + 0.5, b[1] + 0.5, b[2] + 0.5);
-      });
-      // 落点下方的投影
-      g.globalAlpha = 0.22;
+    // 其他玩家正在尝试的位置（联机）
+    if (ov.remote) drawGhost(g, L, ov.remote, palette, true);
+    // 自己待放置的棋子：半透明，始终画在最上层
+    if (ov.ghost) drawGhost(g, L, ov.ghost, palette, false);
+  }
+
+  function sortByDepth(L, cells) {
+    return cells.slice().sort(function (a, b) {
+      return depthOf(L, a[0] + 0.5, a[1] + 0.5, a[2] + 0.5) - depthOf(L, b[0] + 0.5, b[1] + 0.5, b[2] + 0.5);
+    });
+  }
+
+  function drawGhost(g, L, gh, palette, remote) {
+    // 落点下方的投影
+    if (gh.shadow) {
+      g.globalAlpha = remote ? 0.14 : 0.22;
       g.fillStyle = gh.valid ? gh.color : palette.danger;
       gh.shadow.forEach(function (s) {
         pathPts(g, [[s[0], s[2]], [s[0] + 1, s[2]], [s[0] + 1, s[2] + 1], [s[0], s[2] + 1]].map(function (p) { return proj(L, p[0], s[1] + 0.01, p[1]); }));
         g.fill();
       });
       g.globalAlpha = 1;
-      cells.forEach(function (c) {
-        drawCube(g, L, c, gh.color, {
-          alpha: gh.valid ? 0.78 : 0.5,
-          tint: gh.valid ? null : mix(palette.danger, 'white', 0.25),
-          stroke: gh.valid ? palette.ink : palette.danger,
-          strokeWidth: Math.max(1.2, L.k * 0.05)
-        });
-      });
     }
+    g.save();
+    if (remote) g.setLineDash([L.k * 0.16, L.k * 0.1]);
+    sortByDepth(L, gh.cells).forEach(function (c) {
+      drawCube(g, L, c, gh.color, {
+        alpha: remote ? 0.5 : gh.valid ? 0.78 : 0.5,
+        tint: gh.valid ? null : mix(palette.danger, 'white', 0.25),
+        stroke: remote ? gh.color : gh.valid ? palette.ink : palette.danger,
+        strokeWidth: Math.max(1.2, L.k * (remote ? 0.06 : 0.05)),
+        noNub: remote
+      });
+    });
+    g.restore();
+  }
+
+  // 屏幕上挡在待放棋子前面的方块
+  function fadeSet(L, topo, board, ghosts) {
+    var out = {};
+    var boxes = [];
+    ghosts.forEach(function (gh) {
+      if (!gh || !gh.cells.length) return;
+      var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, minD = Infinity;
+      gh.cells.forEach(function (c) {
+        cubeCorners(c).forEach(function (q) {
+          var p = proj(L, q[0], q[1], q[2]);
+          if (p[0] < minX) minX = p[0];
+          if (p[0] > maxX) maxX = p[0];
+          if (p[1] < minY) minY = p[1];
+          if (p[1] > maxY) maxY = p[1];
+        });
+        minD = Math.min(minD, depthOf(L, c[0] + 0.5, c[1] + 0.5, c[2] + 0.5));
+      });
+      boxes.push({ minX: minX, minY: minY, maxX: maxX, maxY: maxY, d: minD });
+    });
+    if (!boxes.length) return out;
+    for (var i = 0; i < board.length; i++) {
+      if (board[i] < 0) continue;
+      var c = coordOf(topo, i);
+      var d = depthOf(L, c[0] + 0.5, c[1] + 0.5, c[2] + 0.5);
+      var center = proj(L, c[0] + 0.5, c[1] + 0.5, c[2] + 0.5);
+      var r = L.k * 0.9;
+      for (var b = 0; b < boxes.length; b++) {
+        var bx = boxes[b];
+        if (d > bx.d + 0.01 && center[0] + r > bx.minX && center[0] - r < bx.maxX && center[1] + r > bx.minY && center[1] - r < bx.maxY) {
+          out[i] = 1;
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  function cubeCorners(c) {
+    var out = [];
+    for (var k = 0; k < 8; k++) out.push([c[0] + (k & 1), c[1] + ((k >> 1) & 1), c[2] + ((k >> 2) & 1)]);
+    return out;
   }
 
   /* ---------- 拾取：鼠标所指的那一列 ---------- */
