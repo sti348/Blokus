@@ -31,7 +31,7 @@ const MAX_CLIENTS_PER_ROOM = 32;
 const MAX_BODY = 16 * 1024;
 const IDLE_ROOM_MS = 30 * 60 * 1000;
 let AI_DELAY = { fast: 250, normal: 650, slow: 1200 };
-// 「大模型」电脑等房主的浏览器落子，超时由服务器用困难电脑代下
+// 「大模型」电脑等房主的浏览器落子，超时由服务器用大师电脑代下
 let LLM_WAIT_MS = 150 * 1000;
 let llmProxyOn = process.env.LLM_PROXY === '1';
 const LLM_MAX_BODY = 256 * 1024;
@@ -135,7 +135,7 @@ function scheduleAI(entry) {
   entry.aiTimer = setTimeout(() => {
     if (!rooms.has(room.code) || entry.room.rev !== rev) return;
     const st = Online.gameState(entry.room);
-    const move = AI.chooseMove(st, llm ? 'hard' : pl.level || 'normal');
+    const move = AI.chooseMove(st, llm ? 'expert' : pl.level || 'normal');
     const action = move ? Object.assign({ type: 'place' }, move) : { type: 'resign' };
     const result = Online.applyOp(entry.room, { type: 'act', at: st.actions.length, action }, Online.SYSTEM, {
       now: Date.now(),

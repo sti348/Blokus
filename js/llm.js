@@ -1,10 +1,11 @@
 /*
- * 大模型电脑。程序先用困难电脑的估值找出几步“差不多一样好”的合法走法（分差很小），
- * 只有一步明显最好时直接走，不问模型；否则把局面和这几步交给模型，由它做战略取舍：
+ * 大模型电脑。棋力来自程序的搜索：大师电脑（AI.ExpertSearch）先把候选走法各推演几轮，
+ * 只把推演结果差不多一样好的几步交给模型，由它做战略取舍；只有一步明显最好时直接走，不问模型。
  *   openai —— 任何 OpenAI 兼容的 Chat Completions 接口，回答一个编号和一句理由
  *   jev    —— TypeSafe 的 Jev（System One 决策模型），用一道选择题直接返回选项和把握
  *   claude —— Claude 发布的页面自带的 Claude
- * 候选都在困难电脑认可的范围内，所以模型怎么选都不会比困难电脑差太多。
+ * 候选都在大师认可的范围内，所以模型怎么选都接近大师的水平。
+ * 每个座位可以用不同的模型配置（profiles），配置只保存在本机。
  * 出错、超时或回答无法解析时 decide() 会失败，由调用方改用内置电脑。
  */
 (function (root, factory) {
@@ -20,9 +21,9 @@
   // 也可以经 OpenRouter 调用 Jev（它的 Decisions 接口，请求和回答格式相同）
   var JEV_OPENROUTER_URL = 'https://openrouter.ai/api/v1';
   var JEV_OPENROUTER_MODEL = '~typesafe/jev-latest';
-  // 候选：与最佳一步的估值差不超过 MARGIN，最多 MAX_CANDIDATES 个（自对弈里这样选最差的一步也接近困难电脑）
-  var MARGIN = 0.4;
-  var MAX_CANDIDATES = 5;
+  // 候选：与最佳一步的推演结果差不超过 MARGIN，最多 MAX_CANDIDATES 个（自对弈里总选最差的一步也接近大师）
+  var MARGIN = 0.6;
+  var MAX_CANDIDATES = 4;
   var LETTER = { blue: 'B', yellow: 'Y', red: 'R', green: 'G', violet: 'V', orange: 'O' };
 
   function defaults() {
@@ -55,6 +56,40 @@
     if (isFinite(t) && raw.timeout !== null && raw.timeout !== '') s.timeout = Math.max(5, Math.min(300, t));
     if (typeof raw.noThink === 'boolean') s.noThink = raw.noThink;
     return s;
+  }
+
+  function profileName(s) {
+    return String(s == null ? '' : s).replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 16);
+  }
+
+  /**
+   * 全部模型配置：{ profiles: [settings + name] }，名字不重复；至少有一个。
+   * 也接受旧版的单个设置。
+   */
+  function normalizeConfig(raw) {
+    var list = raw && Array.isArray(raw.profiles) ? raw.profiles.slice(0, 12) : raw && typeof raw === 'object' ? [raw] : [];
+    var out = [], used = {};
+    list.forEach(function (p, i) {
+      var s = normalizeSettings(p);
+      var name = profileName(p && p.name) || (i === 0 ? '默认' : '模型 ' + (i + 1));
+      var base = name, k = 2;
+      while (used[name]) name = (base.slice(0, 13) + ' ' + k++);
+      used[name] = 1;
+      s.name = name;
+      out.push(s);
+    });
+    if (!out.length) {
+      var d = normalizeSettings(null);
+      d.name = '默认';
+      out.push(d);
+    }
+    return { profiles: out };
+  }
+
+  // 按名字找配置，找不到用第一个
+  function findProfile(cfg, name) {
+    for (var i = 0; i < cfg.profiles.length; i++) if (cfg.profiles[i].name === name) return cfg.profiles[i];
+    return cfg.profiles[0];
   }
 
   function validUrl(u) { return /^https?:\/\/[^\s]+$/i.test(u || ''); }
@@ -114,15 +149,14 @@
   }
 
   /**
-   * 几步估值相近的好棋（按估值从高到低），附带给模型看的特征：
+   * 从大师的推演结果（按 value 从高到低）里取几步差不多一样好的，附带给模型看的特征：
    * mine / opp：落子后自己 / 对手合计可走步数相对现在的变化（百分比）；
    * blocks：[{ player, n }] 压住各家对手的可落子角点数。
    */
-  function candidates(state) {
-    var ranked = AI.rankMoves(state, 12);
-    if (!ranked.length) return [];
-    var best = ranked[0].score;
-    var list = ranked.filter(function (c) { return c.score >= best - MARGIN; }).slice(0, MAX_CANDIDATES);
+  function candidatesFrom(state, results) {
+    if (!results || !results.length) return [];
+    var best = results[0].value;
+    var list = results.filter(function (c) { return c.value >= best - MARGIN; }).slice(0, MAX_CANDIDATES);
     if (list.length < 2) return list;
     var me = state.current, topo = state.topo;
     var myBefore = countMoves(state, me), oppBefore = 0;
@@ -134,7 +168,9 @@
       opps.push({ player: o, mark: Engine.anchorMask(state.board, topo, o, pl, forb).mark });
     });
     function pct(after, before) { return Math.round((after - before) / Math.max(1, before) * 100); }
-    list.forEach(function (c) {
+    return list.map(function (r) {
+      var c = {};
+      for (var k in r) c[k] = r[k];
       var m = c.move;
       var idx = Engine.placementIndices(state, m.piece, m.orient, m.x, m.y, m.z);
       c.mine = pct(c.myMoves, myBefore);
@@ -142,11 +178,16 @@
       c.blocks = [];
       opps.forEach(function (o) {
         var n = 0;
-        for (var k = 0; k < idx.length; k++) if (o.mark[idx[k]]) n++;
+        for (var j = 0; j < idx.length; j++) if (o.mark[idx[j]]) n++;
         if (n) c.blocks.push({ player: o.player, n: n });
       });
+      return c;
     });
-    return list;
+  }
+
+  // 没有现成的推演结果时当场算（会占用几十到几百毫秒）
+  function candidates(state, results) {
+    return candidatesFrom(state, results || new AI.ExpertSearch(state).run());
   }
 
   /* ================= 提示词 ================= */
@@ -261,7 +302,7 @@
 
   // 固定的说明放在最前面，便于接口缓存前缀
   var SYSTEM = '你是角斗士棋（Blokus）高手，替一方挑选下一步。终局时每个没放上棋盘的格子扣 1 分。' +
-    '程序已经算出几步合法而且差不多一样好的候选，#1 按程序估值略优。请结合局势取舍：压制领先的对手、' +
+    '程序已经把每个候选往后推演过，下面几步都合法而且推演结果差不多一样好，#1 略优。请结合局势取舍：压制领先的对手、' +
     '抢对手正要进入的空地、给自己留下可落子的角点、别把自己困死。没有明显理由就选 #1。' +
     '只回复一行 JSON：{"choice": 编号, "reason": "不超过 20 字的中文理由"}';
 
@@ -285,7 +326,7 @@
     var me = state.players[state.current];
     var criteria = {};
     cands.forEach(function (c, k) {
-      criteria['m' + (k + 1)] = (k === 0 ? '程序估值略优。' : '') + candidateText(state, c);
+      criteria['m' + (k + 1)] = (k === 0 ? '程序推演略优。' : '') + candidateText(state, c);
     });
     return {
       model: model,
@@ -520,12 +561,12 @@
 
   /**
    * 为当前玩家选一步。成功时返回 { move, reason, index, asked, options }；没有合法落子时 move 为 null。
-   * 只有一步明显最好时不问模型（asked 为 false）。
+   * 只有一步明显最好时不问模型（asked 为 false）。results 是大师的推演结果，不传就当场算。
    */
-  function decide(state, settings, env) {
+  function decide(state, settings, env, results) {
     settings = normalizeSettings(settings);
     env = env || {};
-    var cands = candidates(state);
+    var cands = candidates(state, results);
     if (!cands.length) return Promise.resolve({ move: null, reason: '', index: -1, asked: false, options: 0 });
     if (cands.length === 1) return Promise.resolve({ move: cands[0].move, reason: '', index: 0, asked: false, options: 1 });
     if (settings.provider === 'jev') {
@@ -583,11 +624,15 @@
     MAX_CANDIDATES: MAX_CANDIDATES,
     defaults: defaults,
     normalizeSettings: normalizeSettings,
+    normalizeConfig: normalizeConfig,
+    findProfile: findProfile,
+    profileName: profileName,
     isReady: isReady,
     chatUrl: chatUrl,
     jevUrl: jevUrl,
     noThinkParams: noThinkParams,
     candidates: candidates,
+    candidatesFrom: candidatesFrom,
     boardText: boardText,
     buildMessages: buildMessages,
     buildJevRequest: buildJevRequest,

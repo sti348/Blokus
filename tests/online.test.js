@@ -393,3 +393,27 @@ test('服务器：大模型电脑等房主落子，等太久由服务器代下�
   r = await post(base2, '/api/llm', { url: 'http://127.0.0.1:1/v1/chat/completions', body: { model: 'x' } });
   assert.equal(r.status, 502);
 });
+
+test('房间：大师难度与大模型座位的模型配置名', () => {
+  let room = newRoom();
+  room = ok(Online.applyOp(room, { type: 'claim', seat: 1, name: '乙' }, GUEST));
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 2, kind: 'ai', level: 'expert' }, HOST));
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 3, kind: 'ai', level: 'llm', model: ' DeepSeek\u0007 V4 很长很长很长很长的名字 ' }, HOST));
+  assert.equal(room.seats[3].model, 'DeepSeek V4 很长很长');
+  assert.equal(Online.applyOp(room, { type: 'seat', seat: 3, model: 'x' }, GUEST).code, 'not_host');
+  room = ok(Online.applyOp(room, { type: 'seat', seat: 2, model: 'Jev' }, HOST));
+  room = ok(Online.applyOp(room, { type: 'start' }, HOST));
+  const ps = room.game.config.players;
+  assert.equal(ps[2].level, 'expert');
+  assert.equal(ps[2].model, '', '不是大模型座位时不带模型名');
+  assert.equal(ps[3].model, 'DeepSeek V4 很长很长');
+  const norm = Online.normalizeRoom(JSON.parse(JSON.stringify(room)));
+  assert.equal(norm.seats[3].model, 'DeepSeek V4 很长很长');
+  assert.equal(norm.game.config.players[3].model, 'DeepSeek V4 很长很长');
+  assert.equal(norm.game.config.players[2].level, 'expert');
+  // 清空模型名
+  let lobby = newRoom();
+  lobby = ok(Online.applyOp(lobby, { type: 'seat', seat: 3, kind: 'ai', level: 'llm', model: 'A' }, HOST));
+  lobby = ok(Online.applyOp(lobby, { type: 'seat', seat: 3, model: '' }, HOST));
+  assert.equal(lobby.seats[3].model, undefined);
+});

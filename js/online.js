@@ -13,7 +13,7 @@
   var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   var CODE_RE = /^[A-HJ-NP-Z2-9]{5}$/;
   var KINDS = ['open', 'ai', 'off'];
-  var LEVELS = ['easy', 'normal', 'hard', 'llm'];
+  var LEVELS = ['easy', 'normal', 'hard', 'expert', 'llm'];
   var SPEEDS = ['fast', 'normal', 'slow'];
   var SYSTEM = '~system';
 
@@ -44,6 +44,11 @@
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 60);
+  }
+
+  // 大模型座位用的模型配置名（只是名字，配置本身留在房主的设备上）
+  function cleanModel(s) {
+    return cleanNote(s).slice(0, 16);
   }
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -90,7 +95,9 @@
     for (var i = 0; i < raw.seats.length; i++) {
       var s = raw.seats[i];
       if (!s || KINDS.indexOf(s.kind) < 0 || LEVELS.indexOf(s.level) < 0) return null;
-      seats.push({ kind: s.kind, level: s.level, owner: idOrNull(s.owner), name: cleanName(s.name) });
+      var seatRec = { kind: s.kind, level: s.level, owner: idOrNull(s.owner), name: cleanName(s.name) };
+      if (cleanModel(s.model)) seatRec.model = cleanModel(s.model);
+      seats.push(seatRec);
     }
     var game = null;
     if (raw.status !== 'lobby') {
@@ -108,7 +115,8 @@
           name: cleanName(p.name) || '玩家',
           type: p.type === 'ai' ? 'ai' : 'human',
           level: LEVELS.indexOf(p.level) >= 0 ? p.level : 'normal',
-          owner: idOrNull(p.owner)
+          owner: idOrNull(p.owner),
+          model: cleanModel(p.model)
         });
       }
       game = {
@@ -236,6 +244,11 @@
           if (LEVELS.indexOf(op.level) < 0) return fail('bad_level', '无效的难度');
           seat.level = op.level;
         }
+        if (op.model !== undefined) {
+          var model = cleanModel(op.model);
+          if (model) seat.model = model;
+          else delete seat.model;
+        }
         break;
       }
       case 'mode': {
@@ -276,7 +289,8 @@
             name: s.kind === 'ai' ? M.seats[i].label + '方电脑' : (s.name || '玩家'),
             type: s.kind === 'ai' ? 'ai' : 'human',
             level: s.level,
-            owner: s.kind === 'ai' ? null : s.owner
+            owner: s.kind === 'ai' ? null : s.owner,
+            model: s.kind === 'ai' && s.level === 'llm' ? s.model || '' : ''
           });
         }
         if (active.length < 2) return fail('too_few', '至少需要两方参战');
@@ -361,6 +375,7 @@
     normalizeCode: normalizeCode,
     cleanName: cleanName,
     cleanNote: cleanNote,
+    cleanModel: cleanModel,
     defaultSeats: defaultSeats,
     createRoom: createRoom,
     normalizeRoom: normalizeRoom,

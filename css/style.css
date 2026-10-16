@@ -290,7 +290,7 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 }
 .seat-name { grid-area: name; }
 .seat-type { grid-area: type; }
-.seat-level { grid-area: level; display: flex; gap: 8px; align-items: center; color: var(--ink-soft); font-size: 13px; }
+.seat-level { grid-area: level; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; color: var(--ink-soft); font-size: 13px; }
 .seat-level[hidden] { display: none !important; }
 
 .options { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
@@ -466,6 +466,11 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .llm-fields code { font-size: 12px; }
 .llm-timeout input { width: 5.5em; }
 .llm-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.llm-profiles { display: grid; gap: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.llm-profile-bar { display: flex; gap: 8px; align-items: center; }
+.llm-profile-bar select { flex: 1; min-width: 0; }
+.seat-model { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; white-space: nowrap; }
+.seat-model select { min-height: 30px; max-width: 9em; font-size: 13px; }
 .field-note.warn { color: var(--danger); }
 .llm-status { margin: 0; min-height: 1.4em; font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
 .llm-status.ok { color: var(--p-green); }

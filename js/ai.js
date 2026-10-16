@@ -3,6 +3,7 @@
  *   easy   —— 随机落子，偏好大块棋子
  *   normal —— 贪心：棋子大小、新增角点、封堵对手角点、向中心扩张
  *   hard   —— 先用贪心筛选候选，再比较落子后双方的可行步数（机动性）
+ *   expert —— 大师：在困难电脑的候选里，各往后推演两轮再比较
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./engine.js'));
@@ -15,7 +16,8 @@
   var LEVELS = {
     easy: { label: '简单' },
     normal: { label: '普通' },
-    hard: { label: '困难' }
+    hard: { label: '困难' },
+    expert: { label: '大师' }
   };
 
   function isAnchorAfter(board, topo, p, i) {
@@ -204,6 +206,130 @@
     return best;
   }
 
+  /* ---------- 大师：候选走法各推演几轮 ---------- */
+
+  // 推演里每人按贪心选法走（noise > 0 时加一点随机，用于多次推演）
+  function greedyMove(state, o, rng, w, noise) {
+    var moves = Engine.legalMoves(state, o);
+    if (!moves.length) return null;
+    var ctx = makeContext(state, o);
+    var best = null, bestScore = -Infinity;
+    for (var i = 0; i < moves.length; i++) {
+      var s = quickScore(state, o, moves[i], ctx, w) + rng() * (noise || 0.01);
+      if (s > bestScore) { bestScore = s; best = moves[i]; }
+    }
+    return best;
+  }
+
+  var EXPERT_W = { size: 1.0, mob: 3.5, reach: 0.9, oppMob: 1.2, oppReach: 0.25, oppSize: 1.0 };
+
+  // 推演结束时的局面：自己比对手多放的格子 + 双方的机动性
+  function leafEval(state, p, placed, w) {
+    var mine = mobility(state, p);
+    var oppLog = 0, oppSquares = 0, oppPlaced = 0, opponents = 0;
+    state.players.forEach(function (pl, o) {
+      if (o === p) return;
+      oppPlaced += placed[o] || 0;
+      if (pl.done) return;
+      var m = mobility(state, o);
+      oppLog += Math.log(1 + m.count);
+      oppSquares += m.squares;
+      opponents++;
+    });
+    var n = state.players.length - 1;
+    var press = opponents ? 3 / opponents : 0;
+    return w.size * (placed[p] || 0) - w.oppSize * oppPlaced * 3 / n / Math.max(1, n) +
+      w.mob * Math.log(1 + mine.count) + w.reach * mine.squares -
+      press * (w.oppMob * oppLog + w.oppReach * oppSquares);
+  }
+
+  function rollout(state, p, seq, k, rng, placed, opts, stuck) {
+    if (k >= seq.length) return leafEval(state, p, placed, opts.weights || EXPERT_W);
+    var o = seq[k];
+    var m = state.players[o].done || stuck[o] ? null : greedyMove(state, o, rng, o === p ? HARD_QUICK_W : NORMAL_W, opts.noise);
+    if (!m) {
+      stuck[o] = true;
+      var r0 = rollout(state, p, seq, k + 1, rng, placed, opts, stuck);
+      stuck[o] = false;
+      return r0;
+    }
+    var size = state.set.pieces[m.piece].size;
+    placed[o] = (placed[o] || 0) + size;
+    var r = withMove(state, o, m, function () { return rollout(state, p, seq, k + 1, rng, placed, opts, stuck); });
+    placed[o] -= size;
+    return r;
+  }
+
+  var EXPERT_OPTS = { width: 8, rounds: 2, runs: 4, noise: 4, keep: 1 };
+
+  /**
+   * 大师搜索：困难电脑先挑出 width 个候选，每个候选往后推演 rounds 轮（所有人按贪心选法、
+   * 带一点随机），推演 runs 次取平均，再加上困难电脑的估值。
+   * 可以用 step() 分步执行（每步一次推演），不会一次占用太久。
+   * 推演会临时改动 state 再复原，分步执行时请传入局面的副本。
+   */
+  function ExpertSearch(state, opts) {
+    var o = {};
+    for (var k in EXPERT_OPTS) o[k] = EXPERT_OPTS[k];
+    if (opts) for (k in opts) if (opts[k] != null) o[k] = opts[k];
+    this.opts = o;
+    this.state = state;
+    this.p = state.current;
+    this.rng = o.rng || Math.random;
+    this.ranked = rankMoves(state, o.width);
+    var n = state.players.length;
+    this.seq = [];
+    for (var i = 1; i <= o.rounds * n - 1; i++) this.seq.push((this.p + i) % n);
+    this.totals = this.ranked.map(function () { return 0; });
+    this.i = 0;
+    this.r = 0;
+    // 只有一步可走时不用推演
+    if (this.ranked.length < 2) this.i = this.ranked.length;
+  }
+
+  ExpertSearch.prototype.done = function () { return this.i >= this.ranked.length; };
+
+  ExpertSearch.prototype.step = function () {
+    if (this.done()) return;
+    var self = this, state = this.state, p = this.p;
+    var m = this.ranked[this.i].move;
+    var placed = {};
+    placed[p] = state.set.pieces[m.piece].size;
+    this.totals[this.i] += withMove(state, p, m, function () {
+      return rollout(state, p, self.seq, 0, self.rng, placed, self.opts, {});
+    });
+    if (++this.r >= this.opts.runs) {
+      this.r = 0;
+      this.i++;
+    }
+  };
+
+  // 结果按综合估值从高到低：[{ move, value, ...rankMoves 的特征 }]
+  ExpertSearch.prototype.results = function () {
+    var o = this.opts, self = this;
+    var out = this.ranked.map(function (c, i) {
+      var r = {};
+      for (var k in c) r[k] = c[k];
+      r.value = self.ranked.length < 2 ? c.score : self.totals[i] / o.runs + c.score * o.keep;
+      return r;
+    });
+    out.sort(function (a, b) { return b.value - a.value; });
+    return out;
+  };
+
+  ExpertSearch.prototype.run = function () {
+    while (!this.done()) this.step();
+    return this.results();
+  };
+
+  function chooseExpert(state, p, moves, rng, opts) {
+    var o = {};
+    if (opts) for (var k in opts) o[k] = opts[k];
+    o.rng = rng;
+    var res = new ExpertSearch(state, o).run();
+    return res.length ? res[0].move : null;
+  }
+
   /**
    * 当前玩家最好的若干步（按困难电脑的估值从高到低），附带给人看的特征，供大模型挑选。
    * 每项：{ move, score, size, anchors, blocked, myMoves, mySquares, oppMoves }
@@ -252,6 +378,7 @@
     if (moves.length === 1) return moves[0];
     if (level === 'easy') return chooseEasy(state, p, moves, rng);
     if (level === 'normal') return chooseNormal(state, p, moves, rng);
+    if (level === 'expert') return chooseExpert(state, p, moves, rng, opts);
     return chooseHard(state, p, moves, rng, opts);
   }
 
@@ -259,6 +386,7 @@
     LEVELS: LEVELS,
     chooseMove: chooseMove,
     rankMoves: rankMoves,
+    ExpertSearch: ExpertSearch,
     // 暴露给调参脚本
     _weights: { NORMAL_W: NORMAL_W, HARD_QUICK_W: HARD_QUICK_W, HARD_DEEP_W: HARD_DEEP_W }
   };

@@ -21,7 +21,7 @@
     cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。',
     prism: '三角格版的立体玩法：六边形地面由三角形组成，每格是一个三棱柱，棋子落下堆叠。自己的棋子不能面贴面，必须棱或角相接。每人 19 块三棱柱棋子（1–4 格）。'
   };
-  var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难', llm: '大模型' };
+  var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难', expert: '大师', llm: '大模型' };
   var SPEED_MS = { fast: 200, normal: 550, slow: 1100 };
   var REASON_TEXT = {
     used: '这块棋子已经用过了',
@@ -539,7 +539,7 @@
 
   function defaultSeats(n) {
     var out = [];
-    for (var i = 0; i < n; i++) out.push({ type: i === 0 ? 'human' : 'ai', level: 'normal', name: '' });
+    for (var i = 0; i < n; i++) out.push({ type: i === 0 ? 'human' : 'ai', level: 'normal', name: '', model: '' });
     return out;
   }
 
@@ -569,6 +569,7 @@
         if (['human', 'ai', 'off'].indexOf(s.type) >= 0 && !(m === 'duo' && s.type === 'off')) seat.type = s.type;
         if (Object.prototype.hasOwnProperty.call(LEVEL_LABEL, s.level)) seat.level = s.level;
         if (typeof s.name === 'string') seat.name = s.name.slice(0, 12);
+        if (typeof s.model === 'string') seat.model = LLM.profileName(s.model);
       });
     });
     if (typeof saved.hints === 'boolean') p.hints = saved.hints;
@@ -660,7 +661,9 @@
         '<input type="text" class="seat-name" id="seat-name-' + i + '" maxlength="12" aria-label="' + seat.label + '方名字"' +
         ' placeholder="' + placeholder + '" value="' + (s.type === 'human' ? escapeHtml(s.name) : '') + '"' + (s.type === 'human' ? '' : ' disabled') + '>' +
         '<div class="seg small seat-type" role="radiogroup" aria-label="' + seat.label + '方">' + typeRadios + '</div>' +
-        '<div class="seat-level"' + (s.type === 'ai' ? '' : ' hidden') + '>难度 <div class="seg small" role="radiogroup" aria-label="电脑难度">' + levelRadios + '</div></div>';
+        '<div class="seat-level"' + (s.type === 'ai' ? '' : ' hidden') + '>难度 <div class="seg small" role="radiogroup" aria-label="电脑难度">' + levelRadios + '</div>' +
+        (s.level === 'llm' ? '<label class="seat-model">模型 <select id="seat-model-' + i + '" aria-label="' + seat.label + '方用的模型">' + profileOptions(s.model) + '</select></label>' : '') +
+        '</div>';
       li.querySelector('.seat-name').addEventListener('input', function (e) {
         s.name = e.target.value;
         savePrefs();
@@ -678,9 +681,20 @@
         r.addEventListener('change', function () {
           s.level = r.value;
           savePrefs();
-          if (r.value === 'llm') ensureLLMSetup();
+          renderSetup();
+          var again = $('seat-level-' + i + '-' + r.value);
+          if (again) again.focus();
+          if (r.value === 'llm') ensureLLMSetup(s.model);
         });
       });
+      var modelSel = li.querySelector('#seat-model-' + i);
+      if (modelSel) {
+        modelSel.addEventListener('change', function () {
+          s.model = modelSel.value;
+          savePrefs();
+          ensureLLMSetup(s.model);
+        });
+      }
       list.appendChild(li);
     });
 
@@ -705,15 +719,27 @@
       } else {
         name = seat.label + '方电脑';
       }
-      entries.push({ seat: i, name: name, type: s.type, level: s.level });
+      var entry = { seat: i, name: name, type: s.type, level: s.level };
+      if (s.type === 'ai' && s.level === 'llm') entry.model = llmProfile(s.model).name;
+      entries.push(entry);
     });
     if (entries.length < 2) return null;
     return Engine.buildConfig(mode, entries);
   }
 
-  /* ================= 大模型电脑 ================= */
+  /* ================= 大师搜索与大模型电脑 ================= */
 
-  var llm = { settings: LLM.normalizeSettings(load(STORE_LLM)), saved: !!load(STORE_LLM), sample: null, sampleP: null, lastError: '' };
+  var llm = {
+    cfg: LLM.normalizeConfig(load(STORE_LLM)),
+    saved: !!load(STORE_LLM),
+    sample: null,
+    sampleP: null,
+    lastError: '',
+    // 设置框里正在编辑的副本
+    dcfg: null,
+    didx: 0,
+    dialogProvider: 'openai'
+  };
 
   function inClaudePage() {
     return !!window.claude && typeof window.claude.use === 'function';
@@ -731,38 +757,84 @@
   }
 
   // 在 Claude 发布的页面里、还没保存过设置时，默认用页面自带的 Claude（页面不能访问外部网络）
-  function llmSettings() {
-    if (!llm.saved && llm.sample) {
-      var s = LLM.normalizeSettings(llm.settings);
-      s.provider = 'claude';
-      return s;
-    }
-    return llm.settings;
+  function withClaudeDefault(cfg) {
+    if (llm.saved || !llm.sample) return cfg;
+    var out = LLM.normalizeConfig(cfg);
+    out.profiles.forEach(function (p) { p.provider = 'claude'; });
+    return out;
   }
 
-  function llmReady() {
-    var s = llmSettings();
-    return LLM.isReady(s) && (s.provider !== 'claude' || !!llm.sample);
+  // 座位用的模型配置：按名字找，找不到用第一个
+  function llmProfile(name) {
+    return LLM.findProfile(withClaudeDefault(llm.cfg), name);
+  }
+
+  function profileReady(p) {
+    return LLM.isReady(p) && (p.provider !== 'claude' || !!llm.sample);
+  }
+
+  function llmReady(name) { return profileReady(llmProfile(name)); }
+
+  function profileNames() {
+    return llm.cfg.profiles.map(function (p) { return p.name; });
+  }
+
+  function profileOptions(selected) {
+    var names = profileNames();
+    if (names.indexOf(selected) < 0) selected = names[0];
+    return names.map(function (n) {
+      return '<option value="' + escapeHtml(n) + '"' + (n === selected ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+    }).join('');
   }
 
   function llmEnv(signal) {
     return { signal: signal, sample: llm.sample, proxy: netInfo.net && netInfo.net.llmProxy ? 'api/llm' : null };
   }
 
+  function wait(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
   /**
-   * 让大模型替当前电脑选一步。结果 { move, note } 或 { error }（调用方改用困难电脑）；
-   * 没有合法落子时 move 为 null。被取消时 Promise 失败。
+   * 大师搜索：在局面副本上分段推演（每段约 12 毫秒），不卡界面。
+   * isLive() 为假时停止（Promise 失败）；完成后得到推演结果，按好坏排序。
    */
-  function llmChoose(st, signal) {
-    // 先让出一帧，落子动画画完再开始算候选
-    return new Promise(function (r) { setTimeout(r, 20); }).then(claudeSample).then(function () {
-      if (!llmReady()) return { move: null, error: 'setup', setup: true };
-      return LLM.decide(st, llmSettings(), llmEnv(signal)).then(function (r) {
-        if (r.asked) llm.lastError = '';
-        return { move: r.move, note: r.reason || '' };
-      }, function (err) {
-        if (err && err.code === 'cancelled') throw err;
-        return { move: null, error: (err && err.message) || '调用失败' };
+  function searchExpert(isLive) {
+    var copy = Engine.replay(game.config, game.state.actions);
+    var search = new AI.ExpertSearch(copy);
+    return new Promise(function (resolve, reject) {
+      (function tick() {
+        if (!isLive()) { reject({ code: 'cancelled' }); return; }
+        var t0 = Date.now();
+        while (!search.done() && Date.now() - t0 < 12) search.step();
+        if (search.done()) resolve(search.results());
+        else setTimeout(tick, 0);
+      })();
+    });
+  }
+
+  /**
+   * 大师 / 大模型电脑替当前玩家选一步：{ move, note }，大模型出错时还有 error（move 是大师的选择）。
+   * 没有合法落子时 move 为 null；被取消时 Promise 失败。
+   */
+  function thinkMove(pl, isLive, signal) {
+    return wait(20).then(function () {
+      if (!isLive()) throw { code: 'cancelled' };
+      return searchExpert(isLive);
+    }).then(function (results) {
+      var best = results.length ? results[0].move : null;
+      if (pl.level !== 'llm' || !best) return { move: best, note: '' };
+      return claudeSample().then(function () {
+        if (!isLive()) throw { code: 'cancelled' };
+        var profile = llmProfile(pl.model);
+        if (!profileReady(profile)) return { move: best, error: 'setup', setup: true };
+        return LLM.decide(game.state, profile, llmEnv(signal), results).then(function (r) {
+          if (r.asked) llm.lastError = '';
+          return { move: r.move || best, note: r.reason || '' };
+        }, function (err) {
+          if (err && err.code === 'cancelled') throw err;
+          return { move: best, error: (profile.name ? profile.name + '：' : '') + ((err && err.message) || '调用失败') };
+        });
       });
     });
   }
@@ -770,15 +842,15 @@
   // 同样的错误只提示一次
   function reportLLMError(r) {
     var msg = r.setup
-      ? '还没设置好大模型，先由困难电脑代下（开局页面的「大模型设置」）'
-      : '大模型出错：' + r.error + '。这一步由困难电脑代下';
+      ? '还没设置好大模型，这一步由大师电脑代下（开局页面的「大模型设置」）'
+      : '大模型出错（' + r.error + '），这一步由大师电脑代下';
     if (msg === llm.lastError) return;
     llm.lastError = msg;
     toast(msg, 'warn');
   }
 
-  function ensureLLMSetup() {
-    claudeSample().then(function () { if (!llmReady()) openLlmDialog(); });
+  function ensureLLMSetup(name) {
+    claudeSample().then(function () { if (!llmReady(name)) openLlmDialog(name); });
   }
 
   function lastNote(st, p) {
@@ -798,18 +870,18 @@
     return st;
   }
 
+  /* ---------- 设置框：多个模型配置 ---------- */
+
   function llmProviderValue() {
     var r = document.querySelector('input[name="llm-provider"]:checked');
     return r ? r.value : 'openai';
   }
 
-  function copyEndpoint(ep) {
-    return { baseUrl: ep.baseUrl, apiKey: ep.apiKey, model: ep.model };
-  }
+  function currentDraft() { return llm.dcfg.profiles[llm.didx]; }
 
-  // 设置框里 OpenAI 兼容接口和 Jev 各自的填写，切换来源时互不覆盖
+  // OpenAI 兼容接口和 Jev 的填写分开保存在配置里，切换来源时互不覆盖
   function showEndpoint(provider) {
-    var ep = llm.draft[provider];
+    var ep = currentDraft()[provider];
     $('llm-url').value = ep.baseUrl;
     $('llm-key').value = ep.apiKey;
     $('llm-model').value = ep.model;
@@ -819,8 +891,8 @@
   }
 
   function keepEndpoint(provider) {
-    if (provider === 'claude' || !llm.draft) return;
-    llm.draft[provider] = { baseUrl: $('llm-url').value, apiKey: $('llm-key').value, model: $('llm-model').value };
+    if (provider === 'claude' || !llm.dcfg) return;
+    currentDraft()[provider] = { baseUrl: $('llm-url').value, apiKey: $('llm-key').value, model: $('llm-model').value };
   }
 
   function syncLlmProvider() {
@@ -841,32 +913,52 @@
     el.className = 'llm-status' + (kind ? ' ' + kind : '');
   }
 
-  function readLlmForm() {
+  // 把表单写回正在编辑的配置
+  function storeDraft() {
+    var d = currentDraft();
     var p = llmProviderValue();
     keepEndpoint(p);
-    return LLM.normalizeSettings({
-      provider: p,
-      openai: llm.draft.openai,
-      jev: llm.draft.jev,
-      tier: $('llm-tier').value,
-      timeout: $('llm-timeout').value,
-      noThink: $('llm-nothink').checked
-    });
+    d.provider = p;
+    d.tier = $('llm-tier').value;
+    d.timeout = $('llm-timeout').value;
+    d.noThink = $('llm-nothink').checked;
+    d.name = $('llm-profile-name').value;
   }
 
-  function openLlmDialog() {
-    var s = llmSettings();
-    llm.draft = { openai: copyEndpoint(s.openai), jev: copyEndpoint(s.jev) };
-    $('llm-provider-claude-label').hidden = !inClaudePage();
-    $('llm-provider-claude').disabled = !llm.sample;
-    var p = s.provider === 'claude' && !llm.sample ? 'openai' : s.provider;
+  function renderProfileSelect() {
+    $('llm-profile').innerHTML = llm.dcfg.profiles.map(function (p, i) {
+      return '<option value="' + i + '"' + (i === llm.didx ? ' selected' : '') + '>' + escapeHtml(LLM.profileName(p.name) || '（未命名）') + '</option>';
+    }).join('');
+    $('llm-profile-del').disabled = llm.dcfg.profiles.length < 2;
+  }
+
+  function loadDraft() {
+    var d = LLM.normalizeSettings(currentDraft());
+    var keepName = currentDraft().name;
+    d.name = keepName;
+    d.orig = currentDraft().orig;
+    llm.dcfg.profiles[llm.didx] = d;
+    var p = d.provider === 'claude' && !llm.sample ? 'openai' : d.provider;
     $('llm-provider-' + p).checked = true;
     llm.dialogProvider = p;
-    $('llm-tier').value = s.tier;
-    $('llm-timeout').value = s.timeout;
-    $('llm-nothink').checked = s.noThink;
+    $('llm-tier').value = d.tier;
+    $('llm-timeout').value = d.timeout;
+    $('llm-nothink').checked = d.noThink;
+    $('llm-profile-name').value = d.name;
     setLlmStatus('', '');
     syncLlmProvider();
+  }
+
+  function openLlmDialog(focusName) {
+    llm.dcfg = withClaudeDefault(LLM.normalizeConfig(llm.cfg));
+    // 记下原来的名字，改名后座位跟着改
+    llm.dcfg.profiles.forEach(function (p) { p.orig = p.name; });
+    var names = llm.dcfg.profiles.map(function (p) { return p.name; });
+    llm.didx = Math.max(0, names.indexOf(focusName));
+    $('llm-provider-claude-label').hidden = !inClaudePage();
+    $('llm-provider-claude').disabled = !llm.sample;
+    renderProfileSelect();
+    loadDraft();
     openDialog('llm-dialog');
   }
 
@@ -878,9 +970,19 @@
     return '';
   }
 
+  // 改名或删除配置后，座位里记的名字跟着更新
+  function renameSeatModels(map) {
+    MODE_LIST.forEach(function (m) {
+      prefs.seats[m].forEach(function (seat) {
+        if (seat.model && Object.prototype.hasOwnProperty.call(map, seat.model)) seat.model = map[seat.model];
+      });
+    });
+    savePrefs();
+  }
+
   function bindLlmDialog() {
     document.querySelectorAll('.llm-open').forEach(function (b) {
-      b.addEventListener('click', function () { claudeSample().then(openLlmDialog); });
+      b.addEventListener('click', function () { claudeSample().then(function () { openLlmDialog(); }); });
     });
     document.querySelectorAll('input[name="llm-provider"]').forEach(function (r) {
       r.addEventListener('change', function () {
@@ -899,21 +1001,79 @@
     }
     $('llm-jev-typesafe').addEventListener('click', function () { jevPreset(LLM.JEV_URL, LLM.JEV_MODEL); });
     $('llm-jev-openrouter').addEventListener('click', function () { jevPreset(LLM.JEV_OPENROUTER_URL, LLM.JEV_OPENROUTER_MODEL); });
+    $('llm-profile').addEventListener('change', function () {
+      storeDraft();
+      llm.didx = +$('llm-profile').value;
+      renderProfileSelect();
+      loadDraft();
+    });
+    $('llm-profile-name').addEventListener('input', function () {
+      currentDraft().name = $('llm-profile-name').value;
+      var opt = $('llm-profile').options[llm.didx];
+      if (opt) opt.textContent = LLM.profileName($('llm-profile-name').value) || '（未命名）';
+    });
+    $('llm-profile-add').addEventListener('click', function () {
+      if (llm.dcfg.profiles.length >= 12) { setLlmStatus('最多 12 个配置', 'err'); return; }
+      storeDraft();
+      var used = llm.dcfg.profiles.map(function (p) { return LLM.profileName(p.name); });
+      var n = llm.dcfg.profiles.length + 1;
+      while (used.indexOf('模型 ' + n) >= 0) n++;
+      var d = LLM.normalizeSettings(null);
+      d.name = '模型 ' + n;
+      llm.dcfg.profiles.push(d);
+      llm.didx = llm.dcfg.profiles.length - 1;
+      renderProfileSelect();
+      loadDraft();
+      $('llm-profile-name').focus();
+      $('llm-profile-name').select();
+    });
+    $('llm-profile-del').addEventListener('click', function () {
+      if (llm.dcfg.profiles.length < 2) return;
+      llm.dcfg.profiles.splice(llm.didx, 1);
+      llm.didx = 0;
+      renderProfileSelect();
+      loadDraft();
+    });
     $('llm-cancel').addEventListener('click', function () { closeDialog('llm-dialog'); });
     $('llm-save').addEventListener('click', function () {
-      var s = readLlmForm();
-      var cleared = s.provider === 'openai' && !s.openai.baseUrl && !s.openai.model;
-      var problem = cleared ? '' : llmFormProblem(s);
-      if (problem) { setLlmStatus(problem, 'err'); return; }
-      llm.settings = s;
+      storeDraft();
+      var names = {};
+      for (var i = 0; i < llm.dcfg.profiles.length; i++) {
+        var raw = llm.dcfg.profiles[i];
+        var name = LLM.profileName(raw.name);
+        var s = LLM.normalizeSettings(raw);
+        var empty = s.provider === 'openai' && !s.openai.baseUrl && !s.openai.model;
+        var problem = !name ? '请给配置起个名字' : names[name] ? '配置名「' + name + '」重复了' : empty && llm.dcfg.profiles.length === 1 ? '' : llmFormProblem(s);
+        if (problem) {
+          if (i !== llm.didx) {
+            llm.didx = i;
+            renderProfileSelect();
+            loadDraft();
+          }
+          setLlmStatus(problem, 'err');
+          return;
+        }
+        names[name] = 1;
+      }
+      var map = {};
+      var removed = profileNames();
+      llm.dcfg.profiles.forEach(function (p) {
+        if (p.orig) map[p.orig] = LLM.profileName(p.name);
+      });
+      removed.forEach(function (n) { if (!Object.prototype.hasOwnProperty.call(map, n)) map[n] = ''; });
+      llm.cfg = LLM.normalizeConfig(llm.dcfg);
       llm.saved = true;
       llm.lastError = '';
-      save(STORE_LLM, s);
+      save(STORE_LLM, llm.cfg);
+      renameSeatModels(map);
       closeDialog('llm-dialog');
-      toast(llmReady() ? '已保存大模型设置' : '已清空大模型设置');
+      toast('已保存大模型设置');
+      if (!$('setup').hidden) renderSetup();
+      if (!$('lobby').hidden) renderLobby();
     });
     $('llm-test').addEventListener('click', function () {
-      var s = readLlmForm();
+      storeDraft();
+      var s = LLM.normalizeSettings(currentDraft());
       var problem = llmFormProblem(s);
       if (problem) { setLlmStatus(problem, 'err'); return; }
       var btn = $('llm-test');
@@ -1200,9 +1360,9 @@
     if (game.paused || !isLocalAITurn()) return;
     var token = game.aiToken;
     var delay = SPEED_MS[prefs.speed] || SPEED_MS.normal;
-    // 大模型马上开始问，模型的用时算进电脑速度里
-    if (cur().level === 'llm') {
-      runLocalLLM(token, delay);
+    // 大师 / 大模型马上开始算，用时算进电脑速度里
+    if (cur().level === 'expert' || cur().level === 'llm') {
+      runLocalThink(token, delay);
       return;
     }
     game.aiTimer = setTimeout(function () {
@@ -1218,28 +1378,26 @@
     }, delay);
   }
 
-  // 大模型替本地电脑选一步
-  function runLocalLLM(token, minMs) {
+  // 大师 / 大模型替本地电脑选一步
+  function runLocalThink(token, minMs) {
     var ctl = new AbortController();
     var t0 = Date.now();
+    var pl = cur();
+    function live() { return token === game.aiToken && isLocalAITurn(); }
     game.aiAbort = ctl;
     renderTurn();
-    llmChoose(game.state, ctl.signal).then(function (r) {
+    thinkMove(pl, live, ctl.signal).then(function (r) {
       return new Promise(function (resolve) { game.aiTimer = setTimeout(resolve, Math.max(0, minMs - (Date.now() - t0))); }).then(function () { return r; });
     }).then(function (r) {
-      if (token !== game.aiToken || !isLocalAITurn()) return;
+      if (!live()) return;
       game.aiAbort = null;
-      var move = r.move;
-      if (r.error) {
-        reportLLMError(r);
-        move = AI.chooseMove(game.state, 'hard');
-      }
-      if (!move) {
+      if (r.error) reportLLMError(r);
+      if (!r.move) {
         Engine.applyAction(game.state, { type: 'resign' });
         afterAction();
         return;
       }
-      commitMove(move, true, r.note);
+      commitMove(r.move, true, r.note);
     }, function () { /* 已取消 */ });
   }
 
@@ -1293,6 +1451,7 @@
       pl.level = cp.level;
       pl.name = cp.name;
       pl.owner = cp.owner;
+      pl.model = cp.model;
     });
   }
 
@@ -1380,8 +1539,10 @@
     clearTimeout(online.aiTimer);
     var room = online.room;
     if (!room || room.status !== 'playing' || !isOnlineGame() || !game.state || game.state.over || online.pending) return;
-    if (cur().type !== 'ai') return;
-    var llmSeat = cur().level === 'llm';
+    var pl = cur();
+    if (pl.type !== 'ai') return;
+    var llmSeat = pl.level === 'llm';
+    var heavy = llmSeat || pl.level === 'expert';
     if (online.net.serverRunsAI && !llmSeat) return;
     var at = game.state.actions.length;
     if (online.aiBusy === at) return;
@@ -1389,7 +1550,7 @@
     var mine = runner === online.pid;
     if (online.net.serverRunsAI && !mine) return;
     var speed = SPEED_MS[room.speed] || SPEED_MS.normal;
-    var delay = mine ? (llmSeat ? 0 : speed) : (llmSeat ? 160000 : 12000) + Math.random() * 4000;
+    var delay = mine ? (heavy ? 0 : speed) : (llmSeat ? 160000 : 12000) + Math.random() * 4000;
     var session = online;
     function stale() {
       return online !== session || !game.state || game.state.over || game.state.actions.length !== at || cur().type !== 'ai';
@@ -1397,16 +1558,17 @@
     online.aiTimer = setTimeout(function () {
       if (stale()) return;
       var ask;
-      if (llmSeat && mine) {
+      if (heavy && mine) {
         online.aiBusy = at;
         online.aiAbort = new AbortController();
         renderTurn();
         var t0 = Date.now();
-        ask = llmChoose(game.state, online.aiAbort.signal).then(function (r) {
-          return new Promise(function (resolve) { setTimeout(resolve, Math.max(0, speed - (Date.now() - t0))); }).then(function () { return r; });
+        ask = thinkMove(pl, function () { return !stale(); }, online.aiAbort.signal).then(function (r) {
+          return wait(Math.max(0, speed - (Date.now() - t0))).then(function () { return r; });
         });
       } else {
-        ask = Promise.resolve({ move: AI.chooseMove(game.state, llmSeat ? 'hard' : cur().level), note: '' });
+        // 替掉线的人兜底时用快的算法
+        ask = Promise.resolve({ move: AI.chooseMove(game.state, heavy ? 'hard' : pl.level), note: '' });
       }
       ask.then(function (r) {
         if (online !== session) return;
@@ -1415,16 +1577,18 @@
           online.aiAbort = null;
         }
         if (stale()) return;
+        if (r.error) reportLLMError(r);
         var move = r.move;
-        if (r.error) {
-          reportLLMError(r);
-          move = AI.chooseMove(game.state, 'hard');
-        }
         var action = move ? { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y, z: move.z } : { type: 'resign' };
         var op = { type: 'act', at: at, action: action };
         if (move && r.note) op.note = r.note;
         sendOp(op, true).catch(function () {});
-      }, function () { /* 已取消 */ });
+      }, function () {
+        if (online === session && online.aiBusy === at) {
+          online.aiBusy = -1;
+          online.aiAbort = null;
+        }
+      });
     }, delay);
   }
 
@@ -1941,7 +2105,7 @@
       }
       var score = Engine.scoreOf(pl);
       var placed = total - pl.remainingSquares;
-      var kind = pl.type === 'human' ? (onlineMode && pl.owner === myId() ? '你' : '玩家') : '电脑 · ' + LEVEL_LABEL[pl.level];
+      var kind = pl.type === 'human' ? (onlineMode && pl.owner === myId() ? '你' : '玩家') : '电脑 · ' + LEVEL_LABEL[pl.level] + (pl.level === 'llm' && pl.model ? ' · ' + pl.model : '');
       var pieces = order.map(function (pi) {
         return '<i' + (pl.remaining[pi] ? '' : ' class="used"') + '>' + pieceIcon(st.set, pi) + '</i>';
       }).join('');
@@ -2400,7 +2564,7 @@
       var mine = s.owner === me;
       var title, sub;
       if (s.kind === 'off') { title = '空位'; sub = '本局不参战'; }
-      else if (s.kind === 'ai') { title = seat.label + '方电脑'; sub = '电脑 · ' + LEVEL_LABEL[s.level]; }
+      else if (s.kind === 'ai') { title = seat.label + '方电脑'; sub = '电脑 · ' + LEVEL_LABEL[s.level] + (s.level === 'llm' && s.model ? ' · ' + s.model : ''); }
       else if (s.owner) {
         title = s.name || '玩家';
         sub = (mine ? '你' : '玩家') + (s.owner === room.host ? ' · 房主' : '') + (known ? (isPeerOnline(s.owner) ? ' · 在线' : ' · 离线') : '');
@@ -2418,7 +2582,9 @@
         if (s.kind === 'ai') {
           hostCtl = '<div class="seat-level">难度 <div class="seg small" role="radiogroup" aria-label="电脑难度">' + Object.keys(LEVEL_LABEL).map(function (lv) {
             return '<label><input type="radio" name="lobby-level-' + i + '" value="' + lv + '" data-level="' + i + '"' + (s.level === lv ? ' checked' : '') + '><span>' + LEVEL_LABEL[lv] + '</span></label>';
-          }).join('') + '</div></div>';
+          }).join('') + '</div>' +
+            (s.level === 'llm' ? '<label class="seat-model">模型 <select data-model="' + i + '" aria-label="' + seat.label + '方用的模型">' + profileOptions(s.model) + '</select></label>' : '') +
+            '</div>';
         }
       }
       return '<li class="seat lobby-seat' + (s.kind === 'off' ? ' off' : '') + (mine ? ' mine' : '') + '" style="--c: var(--p-' + seat.color + ')">' +
@@ -2725,8 +2891,16 @@
       $('lobby-error').hidden = true;
       if (t.dataset.kind) sendOp({ type: 'seat', seat: +t.dataset.kind, kind: t.value }).catch(renderLobby);
       if (t.dataset.level) {
-        sendOp({ type: 'seat', seat: +t.dataset.level, level: t.value }).catch(renderLobby);
-        if (t.value === 'llm') ensureLLMSetup();
+        var op = { type: 'seat', seat: +t.dataset.level, level: t.value };
+        if (t.value === 'llm') {
+          op.model = llmProfile(online && online.room && online.room.seats[op.seat] ? online.room.seats[op.seat].model : '').name;
+          ensureLLMSetup(op.model);
+        }
+        sendOp(op).catch(renderLobby);
+      }
+      if (t.dataset.model) {
+        sendOp({ type: 'seat', seat: +t.dataset.model, model: t.value }).catch(renderLobby);
+        ensureLLMSetup(t.value);
       }
     });
     $('lobby-speed').addEventListener('change', function (e) { sendOp({ type: 'speed', speed: e.target.value }).catch(renderLobby); });
