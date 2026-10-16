@@ -1,14 +1,23 @@
 /*
- * 角斗士棋界面：开局设置、棋盘绘制、人机交互、电脑回合调度、存档。
+ * 角斗士棋界面：开局设置、联机房间、棋盘绘制（方格 / 三角格）、人机交互、电脑回合调度、存档。
  */
 (function () {
   'use strict';
 
-  var PIECES = BlokusPieces.PIECES;
-  var orientFor = BlokusPieces.orientFor;
+  var Pieces = BlokusPieces;
   var Engine = BlokusEngine;
   var AI = BlokusAI;
+  var Online = BlokusOnline;
+  var Net = BlokusNet;
+  var EMPTY = Engine.EMPTY;
 
+  var MODE_LIST = ['classic', 'duo', 'trigon'];
+  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块' };
+  var MODE_NOTE = {
+    classic: '21 块方块棋子，四人各从棋盘一角出发。',
+    duo: '两人对战，从棋盘内侧的两个起点出发。',
+    trigon: '22 块三角棋子，6 个公共起点；4 人用边长 9 的六边形棋盘，人少时棋盘相应缩小。'
+  };
   var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难' };
   var SPEED_MS = { fast: 200, normal: 550, slow: 1100 };
   var REASON_TEXT = {
@@ -16,17 +25,16 @@
     bounds: '超出棋盘范围',
     occupied: '这里已经有棋子了',
     edge: '不能和自己的棋子边贴边',
-    start: '第一块必须盖住你的起始角',
+    start: '第一块必须盖住起点',
     corner: '必须和自己的棋子角对角相接',
     over: '对局已经结束'
   };
   var STORE_PREFS = 'blokus.prefs.v1';
   var STORE_SAVE = 'blokus.save.v1';
+  var STORE_ONLINE = 'blokus.online.v1';
+  var STORE_TOKENS = 'blokus.tokens.v1';
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
-  // 托盘里大块在前
-  var TRAY_ORDER = PIECES.map(function (p) { return p.index; })
-    .sort(function (a, b) { return PIECES[b].size - PIECES[a].size || a - b; });
 
   function $(id) { return document.getElementById(id); }
 
@@ -47,6 +55,7 @@
   }
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  function sameCell(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y; }
 
   /* ================= 主题颜色 ================= */
 
@@ -81,54 +90,89 @@
     if (demo.view) demo.view.draw();
   }
 
-  /* ================= 棋盘绘制 ================= */
+  /* ================= 多边形工具 ================= */
 
-  function roundRect(g, x, y, w, h, r) {
+  function polyCentroid(poly) {
+    var x = 0, y = 0;
+    poly.forEach(function (v) { x += v[0]; y += v[1]; });
+    return [x / poly.length, y / poly.length];
+  }
+
+  // 正多边形的内切圆半径（中心到各边的最短距离）
+  function inradius(poly, c) {
+    var r = Infinity;
+    for (var k = 0; k < poly.length; k++) {
+      var a = poly[k], b = poly[(k + 1) % poly.length];
+      var dx = b[0] - a[0], dy = b[1] - a[1];
+      var d = Math.abs(dx * (a[1] - c[1]) - dy * (a[0] - c[0])) / (Math.sqrt(dx * dx + dy * dy) || 1);
+      if (d < r) r = d;
+    }
+    return r;
+  }
+
+  function shrink(poly, c, f) {
+    return poly.map(function (v) { return [c[0] + (v[0] - c[0]) * f, c[1] + (v[1] - c[1]) * f]; });
+  }
+
+  function pathPoly(g, poly) {
     g.beginPath();
-    g.moveTo(x + r, y);
-    g.arcTo(x + w, y, x + w, y + h, r);
-    g.arcTo(x + w, y + h, x, y + h, r);
-    g.arcTo(x, y + h, x, y, r);
-    g.arcTo(x, y, x + w, y, r);
+    g.moveTo(poly[0][0], poly[0][1]);
+    for (var k = 1; k < poly.length; k++) g.lineTo(poly[k][0], poly[k][1]);
     g.closePath();
   }
 
-  // 一格塑料方块：斜面高光 + 内凸方台
-  function makeTile(color, s) {
+  function pointInPoly(x, y, poly) {
+    var inside = false;
+    for (var i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      var xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+
+  /* ================= 棋盘绘制 ================= */
+
+  // 一格塑料棋子：斜面高光 + 内凸台（方格、三角格通用）
+  function makeTile(color, poly, w, h) {
     var c = document.createElement('canvas');
-    c.width = c.height = s;
+    c.width = w;
+    c.height = h;
     var g = c.getContext('2d');
-    var gap = Math.max(1, s * 0.05);
-    var x0 = gap / 2, w = s - gap, r = s * 0.12, b = s * 0.13;
-    roundRect(g, x0, x0, w, w, r);
+    var cen = polyCentroid(poly);
+    var r = inradius(poly, cen);
+    var gap = Math.max(0.6, r * 0.1);
+    var outer = shrink(poly, cen, (r - gap) / r);
+    var inner = shrink(outer, cen, 0.72);
+    pathPoly(g, outer);
     g.fillStyle = color;
     g.fill();
-    g.save();
-    g.clip();
-    g.fillStyle = 'rgba(255,255,255,0.32)';
-    g.beginPath();
-    g.moveTo(x0, x0); g.lineTo(x0 + w, x0); g.lineTo(x0 + w - b, x0 + b);
-    g.lineTo(x0 + b, x0 + b); g.lineTo(x0 + b, x0 + w - b); g.lineTo(x0, x0 + w);
-    g.closePath();
-    g.fill();
-    g.fillStyle = 'rgba(0,0,0,0.22)';
-    g.beginPath();
-    g.moveTo(x0 + w, x0); g.lineTo(x0 + w, x0 + w); g.lineTo(x0, x0 + w);
-    g.lineTo(x0 + b, x0 + w - b); g.lineTo(x0 + w - b, x0 + w - b); g.lineTo(x0 + w - b, x0 + b);
-    g.closePath();
-    g.fill();
-    var grad = g.createLinearGradient(0, x0 + b, 0, x0 + w - b);
+    for (var k = 0; k < outer.length; k++) {
+      var a = outer[k], b = outer[(k + 1) % outer.length];
+      var a2 = inner[k], b2 = inner[(k + 1) % inner.length];
+      var dx = b[0] - a[0], dy = b[1] - a[1], len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var light = (dy / len) * -0.55 + (-dx / len) * -0.83;
+      g.beginPath();
+      g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(b2[0], b2[1]); g.lineTo(a2[0], a2[1]);
+      g.closePath();
+      g.fillStyle = light > 0 ? 'rgba(255,255,255,' + (0.36 * light).toFixed(3) + ')' : 'rgba(0,0,0,' + (0.26 * -light).toFixed(3) + ')';
+      g.fill();
+    }
+    var top = Infinity, bottom = -Infinity;
+    inner.forEach(function (v) { top = Math.min(top, v[1]); bottom = Math.max(bottom, v[1]); });
+    var grad = g.createLinearGradient(0, top, 0, bottom);
     grad.addColorStop(0, 'rgba(255,255,255,0.16)');
     grad.addColorStop(1, 'rgba(0,0,0,0.05)');
+    pathPoly(g, inner);
     g.fillStyle = grad;
-    g.fillRect(x0 + b, x0 + b, w - 2 * b, w - 2 * b);
-    var m = s * 0.31;
+    g.fill();
+    var nub = shrink(outer, cen, 0.42);
+    g.lineWidth = Math.max(1, r * 0.07);
+    pathPoly(g, nub);
     g.strokeStyle = 'rgba(0,0,0,0.13)';
-    g.lineWidth = Math.max(1, s * 0.03);
-    g.strokeRect(m, m, s - 2 * m, s - 2 * m);
+    g.stroke();
+    pathPoly(g, nub.map(function (v) { return [v[0] - g.lineWidth, v[1] - g.lineWidth]; }));
     g.strokeStyle = 'rgba(255,255,255,0.18)';
-    g.strokeRect(m - g.lineWidth, m - g.lineWidth, s - 2 * m, s - 2 * m);
-    g.restore();
+    g.stroke();
     return c;
   }
 
@@ -139,7 +183,9 @@
     this.getOverlay = getOverlay;
     this.css = 0;
     this.dpr = 1;
+    this.L = null;
     this.tiles = {};
+    this.tilesKey = '';
     this.bgKey = '';
     this.bgCanvas = null;
   }
@@ -153,76 +199,155 @@
     this.dpr = dpr;
     this.canvas.width = Math.round(css * dpr);
     this.canvas.height = Math.round(css * dpr);
-    this.tiles = {};
+    this.L = null;
     return true;
   };
 
-  BoardView.prototype.geom = function (n) {
-    var pad = Math.max(6, this.css * 0.024);
-    return { pad: pad, cell: (this.css - pad * 2) / n };
+  // 顶点坐标 -> 画布像素
+  BoardView.prototype.layout = function (topo) {
+    if (this.L && this.L.topo === topo && this.L.css === this.css) return this.L;
+    var b = topo.bounds, css = this.css;
+    var pad = Math.max(6, css * 0.026);
+    var wS = (b.maxVX - b.minVX) * topo.unitX, hS = (b.maxVY - b.minVY) * topo.unitY;
+    var k = Math.min((css - 2 * pad) / wS, (css - 2 * pad) / hS);
+    var sx = topo.unitX * k, sy = topo.unitY * k;
+    var L = {
+      topo: topo,
+      css: css,
+      pad: pad,
+      k: k,
+      sx: sx,
+      sy: sy,
+      ox: (css - wS * k) / 2 - b.minVX * sx,
+      oy: (css - hS * k) / 2 - b.minVY * sy,
+      inr: topo.kind === 'tri' ? k * 0.2887 : k * 0.5,
+      box: new Float64Array(topo.n * 4)
+    };
+    topo.cells.forEach(function (i) {
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      topo.polys[i].forEach(function (v) {
+        var x = L.ox + v[0] * sx, y = L.oy + v[1] * sy;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      });
+      L.box[i * 4] = x0;
+      L.box[i * 4 + 1] = y0;
+      L.box[i * 4 + 2] = x1 - x0;
+      L.box[i * 4 + 3] = y1 - y0;
+    });
+    this.L = L;
+    return L;
   };
 
-  BoardView.prototype.cellAt = function (clientX, clientY, n) {
+  function vpx(L, v) { return [L.ox + v[0] * L.sx, L.oy + v[1] * L.sy]; }
+  function cellPolyPx(L, i) { return L.topo.polys[i].map(function (v) { return vpx(L, v); }); }
+  function cellCenterPx(L, i) { return [L.ox + L.topo.centroids[i * 2] * L.k, L.oy + L.topo.centroids[i * 2 + 1] * L.k]; }
+
+  BoardView.prototype.cellAt = function (clientX, clientY, topo) {
     var r = this.canvas.getBoundingClientRect();
     if (clientX < r.left || clientY < r.top || clientX > r.right || clientY > r.bottom) return null;
-    var g = this.geom(n);
-    var x = Math.floor((clientX - r.left - g.pad) / g.cell);
-    var y = Math.floor((clientY - r.top - g.pad) / g.cell);
-    return { x: clamp(x, 0, n - 1), y: clamp(y, 0, n - 1) };
-  };
-
-  BoardView.prototype.tile = function (color, cell) {
-    var s = Math.max(4, Math.ceil(cell * this.dpr));
-    if (this.tilesTheme !== themeVersion) {
-      this.tiles = {};
-      this.tilesTheme = themeVersion;
+    var L = this.layout(topo);
+    var vx = (clientX - r.left - L.ox) / L.sx, vy = (clientY - r.top - L.oy) / L.sy;
+    if (topo.kind === 'square') {
+      return { x: clamp(Math.floor(vx), 0, topo.cols - 1), y: clamp(Math.floor(vy), 0, topo.rows - 1) };
     }
-    var key = color + '|' + s;
-    if (!this.tiles[key]) this.tiles[key] = makeTile(color, s);
-    return this.tiles[key];
+    var y = Math.floor(vy);
+    if (y < 0 || y >= topo.rows) return null;
+    var fx = Math.floor(vx);
+    for (var x = fx - 2; x <= fx + 1; x++) {
+      if (x < 0 || x >= topo.cols) continue;
+      var i = y * topo.cols + x;
+      if (topo.valid[i] && pointInPoly(vx, vy, topo.polys[i])) return { x: x, y: y };
+    }
+    return null;
   };
 
-  BoardView.prototype.background = function (n) {
-    var key = n + '|' + this.css + '|' + this.dpr + '|' + themeVersion;
+  BoardView.prototype.tile = function (color, L, i) {
+    var topo = L.topo;
+    var key = this.css + '|' + this.dpr + '|' + themeVersion + '|' + topo.kind + topo.size;
+    if (this.tilesKey !== key) {
+      this.tiles = {};
+      this.tilesKey = key;
+    }
+    var shape = topo.kind === 'square' ? 's' : (((i % topo.cols) + Math.floor(i / topo.cols)) & 1) ? 'd' : 'u';
+    var tk = color + shape;
+    if (!this.tiles[tk]) {
+      var bx = L.box[i * 4], by = L.box[i * 4 + 1], bw = L.box[i * 4 + 2], bh = L.box[i * 4 + 3];
+      var dpr = this.dpr;
+      var poly = cellPolyPx(L, i).map(function (v) { return [(v[0] - bx) * dpr, (v[1] - by) * dpr]; });
+      this.tiles[tk] = makeTile(color, poly, Math.max(2, Math.ceil(bw * dpr)), Math.max(2, Math.ceil(bh * dpr)));
+    }
+    return this.tiles[tk];
+  };
+
+  BoardView.prototype.background = function (topo) {
+    var key = topo.kind + topo.size + '|' + this.css + '|' + this.dpr + '|' + themeVersion;
     if (this.bgKey === key) return this.bgCanvas;
     var c = document.createElement('canvas');
     c.width = c.height = Math.round(this.css * this.dpr);
     var g = c.getContext('2d');
     g.scale(this.dpr, this.dpr);
-    var geo = this.geom(n);
-    roundRect(g, 0, 0, this.css, this.css, Math.min(16, this.css * 0.04));
+    var L = this.layout(topo);
+    var outline = topo.outline.map(function (v) { return vpx(L, v); });
+    g.lineJoin = 'round';
+    pathPoly(g, outline);
     g.fillStyle = palette.frame;
+    g.strokeStyle = palette.frame;
+    g.lineWidth = L.pad * 1.7;
     g.fill();
+    g.stroke();
+    pathPoly(g, outline);
     g.fillStyle = palette.groove;
-    g.fillRect(geo.pad, geo.pad, geo.cell * n, geo.cell * n);
+    g.fill();
     g.fillStyle = palette.cell;
-    var inset = Math.max(0.5, geo.cell * 0.06);
-    for (var y = 0; y < n; y++) {
-      for (var x = 0; x < n; x++) {
-        g.fillRect(geo.pad + x * geo.cell + inset, geo.pad + y * geo.cell + inset, geo.cell - inset * 2, geo.cell - inset * 2);
-      }
-    }
+    var f = topo.kind === 'tri' ? 0.8 : 0.88;
+    topo.cells.forEach(function (i) {
+      var poly = cellPolyPx(L, i);
+      pathPoly(g, shrink(poly, polyCentroid(poly), f));
+      g.fill();
+    });
     this.bgKey = key;
     this.bgCanvas = c;
     return c;
   };
 
-  BoardView.prototype.outline = function (cells, geo, style, width, dash) {
+  BoardView.prototype.drawCell = function (L, i, color, alpha, scale) {
     var g = this.ctx;
+    var bx = L.box[i * 4], by = L.box[i * 4 + 1], bw = L.box[i * 4 + 2], bh = L.box[i * 4 + 3];
+    if (scale && scale !== 1) {
+      var c = cellCenterPx(L, i);
+      bx = c[0] + (bx - c[0]) * scale;
+      by = c[1] + (by - c[1]) * scale;
+      bw *= scale;
+      bh *= scale;
+    }
+    g.globalAlpha = alpha == null ? 1 : alpha;
+    g.drawImage(this.tile(color, L, i), bx, by, bw, bh);
+    g.globalAlpha = 1;
+  };
+
+  BoardView.prototype.outline = function (L, cells, style, width, dash) {
+    var g = this.ctx, topo = L.topo;
     var set = {};
-    cells.forEach(function (c) { set[c[0] + ',' + c[1]] = 1; });
+    cells.forEach(function (i) { set[i] = 1; });
     g.save();
     g.strokeStyle = style;
     g.lineWidth = width;
     g.lineCap = 'round';
     if (dash) g.setLineDash(dash);
     g.beginPath();
-    cells.forEach(function (c) {
-      var x = geo.pad + c[0] * geo.cell, y = geo.pad + c[1] * geo.cell, s = geo.cell;
-      if (!set[c[0] + ',' + (c[1] - 1)]) { g.moveTo(x, y); g.lineTo(x + s, y); }
-      if (!set[c[0] + ',' + (c[1] + 1)]) { g.moveTo(x, y + s); g.lineTo(x + s, y + s); }
-      if (!set[(c[0] - 1) + ',' + c[1]]) { g.moveTo(x, y); g.lineTo(x, y + s); }
-      if (!set[(c[0] + 1) + ',' + c[1]]) { g.moveTo(x + s, y); g.lineTo(x + s, y + s); }
+    cells.forEach(function (i) {
+      var poly = topo.polys[i];
+      if (!poly) return;
+      var across = topo.across[i];
+      for (var k = 0; k < poly.length; k++) {
+        if (set[across[k]]) continue;
+        var a = vpx(L, poly[k]), b = vpx(L, poly[(k + 1) % poly.length]);
+        g.moveTo(a[0], a[1]);
+        g.lineTo(b[0], b[1]);
+      }
     });
     g.stroke();
     g.restore();
@@ -233,73 +358,76 @@
     if (!state || !this.css) return;
     var ov = this.getOverlay ? this.getOverlay() : {};
     now = now || performance.now();
-    var g = this.ctx, n = state.size, self = this;
-    var geo = this.geom(n);
+    var g = this.ctx, self = this, topo = state.topo;
+    var L = this.layout(topo);
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.css, this.css);
-    g.drawImage(this.background(n), 0, 0, this.css, this.css);
+    g.drawImage(this.background(topo), 0, 0, this.css, this.css);
 
     function colorOf(p) { return palette.colors[state.players[p].color] || palette.ink; }
-    function tileAt(x, y, color, alpha, scale) {
-      var px = geo.pad + x * geo.cell, py = geo.pad + y * geo.cell, s = geo.cell;
-      if (scale && scale !== 1) {
-        var d = s * (scale - 1) / 2;
-        px -= d; py -= d; s *= scale;
+    function ring(i, color, filled, alpha) {
+      var c = cellCenterPx(L, i);
+      g.beginPath();
+      g.arc(c[0], c[1], L.inr * 0.6, 0, Math.PI * 2);
+      if (filled) {
+        g.globalAlpha = 0.3;
+        g.fillStyle = color;
+        g.fill();
       }
-      g.globalAlpha = alpha == null ? 1 : alpha;
-      g.drawImage(self.tile(color, geo.cell), px, py, s, s);
+      g.globalAlpha = alpha;
+      g.lineWidth = Math.max(1.5, L.inr * 0.2);
+      g.strokeStyle = color;
+      g.stroke();
       g.globalAlpha = 1;
     }
 
-    // 起始角
-    state.players.forEach(function (pl, p) {
-      if (pl.placed > 0) return;
-      var cx = geo.pad + (pl.start[0] + 0.5) * geo.cell;
-      var cy = geo.pad + (pl.start[1] + 0.5) * geo.cell;
-      g.beginPath();
-      g.arc(cx, cy, geo.cell * 0.3, 0, Math.PI * 2);
-      if (p === state.current && !state.over) {
-        g.globalAlpha = 0.3;
-        g.fillStyle = colorOf(p);
-        g.fill();
-        g.globalAlpha = 1;
-      }
-      g.lineWidth = Math.max(1.5, geo.cell * 0.1);
-      g.strokeStyle = colorOf(p);
-      g.stroke();
-    });
+    // 起点
+    var shared = state.players.some(function (pl) { return pl.startIdx.length > 1; });
+    if (shared) {
+      var cp = state.players[state.current];
+      var firstMove = !state.over && cp && cp.placed === 0;
+      state.players[0].startIdx.forEach(function (i) {
+        if (state.board[i] !== EMPTY) return;
+        ring(i, firstMove ? colorOf(state.current) : palette.ink, firstMove, firstMove ? 1 : 0.4);
+      });
+    } else {
+      state.players.forEach(function (pl, p) {
+        if (pl.placed > 0) return;
+        pl.startIdx.forEach(function (i) { ring(i, colorOf(p), p === state.current && !state.over, 1); });
+      });
+    }
 
     // 已落棋子
     var anim = ov.anim, animSet = null, animT = 1;
     if (anim) {
       animT = DROP_MS ? clamp((now - anim.t0) / DROP_MS, 0, 1) : 1;
       animSet = {};
-      anim.cells.forEach(function (c) { animSet[c[1] * n + c[0]] = 1; });
+      anim.cells.forEach(function (i) { animSet[i] = 1; });
     }
     var board = state.board;
-    for (var i = 0; i < board.length; i++) {
+    topo.cells.forEach(function (i) {
       var v = board[i];
-      if (v < 0 || (animSet && animSet[i])) continue;
-      tileAt(i % n, (i - i % n) / n, colorOf(v));
-    }
+      if (v < 0 || (animSet && animSet[i])) return;
+      self.drawCell(L, i, colorOf(v));
+    });
     if (anim) {
       var ease = 1 - Math.pow(1 - animT, 3);
-      anim.cells.forEach(function (c) { tileAt(c[0], c[1], colorOf(anim.player), 0.35 + 0.65 * ease, 1.28 - 0.28 * ease); });
+      anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player), 0.35 + 0.65 * ease, 1.28 - 0.28 * ease); });
     }
 
     // 上一步高亮
     if (ov.lastMove && (!anim || animT >= 1)) {
-      this.outline(ov.lastMove.cells, geo, palette.ink, Math.max(1.5, geo.cell * 0.09));
+      this.outline(L, ov.lastMove, palette.ink, Math.max(1.5, L.inr * 0.18));
     }
 
     // 角点提示
     if (ov.anchors && ov.anchors.list.length) {
       g.fillStyle = ov.anchors.color;
       g.globalAlpha = 0.55;
-      ov.anchors.list.forEach(function (idx) {
-        var x = idx % n, y = (idx - x) / n;
+      ov.anchors.list.forEach(function (i) {
+        var c = cellCenterPx(L, i);
         g.beginPath();
-        g.arc(geo.pad + (x + 0.5) * geo.cell, geo.pad + (y + 0.5) * geo.cell, geo.cell * 0.14, 0, Math.PI * 2);
+        g.arc(c[0], c[1], L.inr * 0.28, 0, Math.PI * 2);
         g.fill();
       });
       g.globalAlpha = 1;
@@ -307,40 +435,43 @@
 
     // 提示走法
     if (ov.hint) {
-      var pulse = REDUCED_MOTION ? 1 : 0.55 + 0.45 * Math.sin(now / 220);
-      g.globalAlpha = pulse;
-      this.outline(ov.hint.cells, geo, ov.hint.color, Math.max(2, geo.cell * 0.12), [geo.cell * 0.25, geo.cell * 0.18]);
+      g.globalAlpha = REDUCED_MOTION ? 1 : 0.55 + 0.45 * Math.sin(now / 220);
+      this.outline(L, ov.hint.cells, ov.hint.color, Math.max(2, L.inr * 0.24), [L.k * 0.25, L.k * 0.18]);
       g.globalAlpha = 1;
     }
 
     // 待放置棋子
     if (ov.ghost) {
       var gh = ov.ghost;
-      gh.cells.forEach(function (c) { tileAt(c[0], c[1], gh.color, gh.valid ? 0.72 : 0.38); });
+      gh.cells.forEach(function (i) { self.drawCell(L, i, gh.color, gh.valid ? 0.72 : 0.38); });
       if (!gh.valid) {
         g.fillStyle = palette.danger;
         g.globalAlpha = 0.28;
-        gh.cells.forEach(function (c) {
-          g.fillRect(geo.pad + c[0] * geo.cell, geo.pad + c[1] * geo.cell, geo.cell, geo.cell);
+        gh.cells.forEach(function (i) {
+          pathPoly(g, cellPolyPx(L, i));
+          g.fill();
         });
         g.globalAlpha = 1;
       }
-      this.outline(gh.cells, geo, gh.valid ? palette.ink : palette.danger, Math.max(1.5, geo.cell * 0.09), gh.valid ? null : [geo.cell * 0.2, geo.cell * 0.14]);
+      this.outline(L, gh.cells, gh.valid ? palette.ink : palette.danger, Math.max(1.5, L.inr * 0.18), gh.valid ? null : [L.k * 0.2, L.k * 0.14]);
     }
   };
 
   /* ================= 棋子图形（托盘 / 预览） ================= */
 
-  function pieceSVG(cells, box) {
-    var w = 0, h = 0;
-    cells.forEach(function (c) { w = Math.max(w, c[0] + 1); h = Math.max(h, c[1] + 1); });
-    var B = box || Math.max(w, h);
-    var ox = (B - w) / 2, oy = (B - h) / 2;
-    var out = '<svg viewBox="-0.1 -0.1 ' + (B + 0.2) + ' ' + (B + 0.2) + '" aria-hidden="true">';
-    cells.forEach(function (c) {
-      var x = ox + c[0], y = oy + c[1];
-      out += '<rect x="' + (x + 0.05) + '" y="' + (y + 0.05) + '" width="0.9" height="0.9" rx="0.14" style="fill:var(--c)"/>' +
-        '<rect x="' + (x + 0.27) + '" y="' + (y + 0.27) + '" width="0.46" height="0.46" rx="0.06" fill="#fff" fill-opacity="0.2"/>';
+  function fmtPts(poly) {
+    return poly.map(function (v) { return v[0].toFixed(3) + ',' + v[1].toFixed(3); }).join(' ');
+  }
+
+  function pieceSVG(orient, box) {
+    var B = box;
+    var ox = (B - orient.boxW) / 2, oy = (B - orient.boxH) / 2;
+    var out = '<svg viewBox="-0.1 -0.1 ' + (B + 0.2).toFixed(2) + ' ' + (B + 0.2).toFixed(2) + '" aria-hidden="true">';
+    orient.polys.forEach(function (poly) {
+      var pts = poly.map(function (v) { return [v[0] + ox, v[1] + oy]; });
+      var c = polyCentroid(pts), r = inradius(pts, c);
+      out += '<polygon points="' + fmtPts(shrink(pts, c, (r - 0.05) / r)) + '" style="fill:var(--c)"/>' +
+        '<polygon points="' + fmtPts(shrink(pts, c, 0.46)) + '" fill="#fff" fill-opacity="0.2"/>';
     });
     return out + '</svg>';
   }
@@ -383,20 +514,17 @@
 
   /* ================= 设置 ================= */
 
+  function defaultSeats(n) {
+    var out = [];
+    for (var i = 0; i < n; i++) out.push({ type: i === 0 ? 'human' : 'ai', level: 'normal', name: '' });
+    return out;
+  }
+
   var DEFAULT_PREFS = {
     mode: 'classic',
-    seats: {
-      classic: [
-        { type: 'human', level: 'normal', name: '' },
-        { type: 'ai', level: 'normal', name: '' },
-        { type: 'ai', level: 'normal', name: '' },
-        { type: 'ai', level: 'normal', name: '' }
-      ],
-      duo: [
-        { type: 'human', level: 'normal', name: '' },
-        { type: 'ai', level: 'normal', name: '' }
-      ]
-    },
+    tab: 'local',
+    nick: '',
+    seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4) },
     hints: true,
     sound: true,
     speed: 'normal'
@@ -406,35 +534,39 @@
     var p = JSON.parse(JSON.stringify(DEFAULT_PREFS));
     var saved = load(STORE_PREFS);
     if (!saved || typeof saved !== 'object') return p;
-    if (saved.mode in Engine.MODES) p.mode = saved.mode;
-    ['classic', 'duo'].forEach(function (m) {
+    if (Engine.isMode(saved.mode)) p.mode = saved.mode;
+    if (saved.tab === 'online') p.tab = 'online';
+    if (typeof saved.nick === 'string') p.nick = Online.cleanName(saved.nick);
+    MODE_LIST.forEach(function (m) {
       var list = saved.seats && saved.seats[m];
       if (!Array.isArray(list)) return;
       p.seats[m].forEach(function (seat, i) {
         var s = list[i];
         if (!s) return;
         if (['human', 'ai', 'off'].indexOf(s.type) >= 0 && !(m === 'duo' && s.type === 'off')) seat.type = s.type;
-        if (s.level in LEVEL_LABEL) seat.level = s.level;
+        if (Object.prototype.hasOwnProperty.call(LEVEL_LABEL, s.level)) seat.level = s.level;
         if (typeof s.name === 'string') seat.name = s.name.slice(0, 12);
       });
     });
     if (typeof saved.hints === 'boolean') p.hints = saved.hints;
     if (typeof saved.sound === 'boolean') p.sound = saved.sound;
-    if (saved.speed in SPEED_MS) p.speed = saved.speed;
+    if (Object.prototype.hasOwnProperty.call(SPEED_MS, saved.speed)) p.speed = saved.speed;
     return p;
   }
 
   var prefs = loadPrefs();
   function savePrefs() { save(STORE_PREFS, prefs); }
 
+  var FOUR_PRESETS = [
+    { label: '1 人 + 3 电脑', types: ['human', 'ai', 'ai', 'ai'] },
+    { label: '2 人 + 2 电脑', types: ['human', 'ai', 'human', 'ai'] },
+    { label: '3 人 + 1 电脑', types: ['human', 'human', 'human', 'ai'] },
+    { label: '4 人同屏', types: ['human', 'human', 'human', 'human'] },
+    { label: '电脑观战', types: ['ai', 'ai', 'ai', 'ai'] }
+  ];
   var PRESETS = {
-    classic: [
-      { label: '1 人 + 3 电脑', types: ['human', 'ai', 'ai', 'ai'] },
-      { label: '2 人 + 2 电脑', types: ['human', 'ai', 'human', 'ai'] },
-      { label: '3 人 + 1 电脑', types: ['human', 'human', 'human', 'ai'] },
-      { label: '4 人同屏', types: ['human', 'human', 'human', 'human'] },
-      { label: '电脑观战', types: ['ai', 'ai', 'ai', 'ai'] }
-    ],
+    classic: FOUR_PRESETS,
+    trigon: FOUR_PRESETS,
     duo: [
       { label: '人机对战', types: ['human', 'ai'] },
       { label: '双人同屏', types: ['human', 'human'] },
@@ -444,16 +576,22 @@
 
   function seatTypeOptions(mode) {
     var opts = [['human', '玩家'], ['ai', '电脑']];
-    if (mode === 'classic') opts.push(['off', '空位']);
+    if (mode !== 'duo') opts.push(['off', '空位']);
     return opts;
   }
 
   function renderSetup() {
     var mode = prefs.mode;
     $('mode-' + mode).checked = true;
+    $('mode-note').textContent = MODE_NOTE[mode];
     $('opt-hints').checked = prefs.hints;
     $('opt-sound').checked = prefs.sound;
     $('opt-speed').value = prefs.speed;
+    var onlineTab = prefs.tab === 'online';
+    $('tab-local').setAttribute('aria-selected', onlineTab ? 'false' : 'true');
+    $('tab-online').setAttribute('aria-selected', onlineTab ? 'true' : 'false');
+    $('local-panel').hidden = onlineTab;
+    $('online-panel').hidden = !onlineTab;
 
     var presets = $('presets');
     presets.innerHTML = '';
@@ -518,18 +656,17 @@
     });
 
     $('setup-error').hidden = true;
-    var saved = loadSaved();
-    $('resume-btn').hidden = !saved;
+    $('resume-btn').hidden = !loadSaved();
+    renderOnlinePanel();
   }
 
-  function buildConfig() {
+  function buildLocalConfig() {
     var mode = prefs.mode;
-    var M = Engine.MODES[mode];
     var seats = prefs.seats[mode];
     var humans = seats.filter(function (s) { return s.type === 'human'; }).length;
-    var players = [];
+    var entries = [];
     var humanNo = 0;
-    M.seats.forEach(function (seat, i) {
+    Engine.MODES[mode].seats.forEach(function (seat, i) {
       var s = seats[i];
       if (s.type === 'off') return;
       var name = s.name.trim();
@@ -539,26 +676,21 @@
       } else {
         name = seat.label + '方电脑';
       }
-      players.push({
-        name: name,
-        color: seat.color,
-        label: seat.label,
-        start: seat.start,
-        type: s.type,
-        level: s.level
-      });
+      entries.push({ seat: i, name: name, type: s.type, level: s.level });
     });
-    if (players.length < 2) return null;
-    return { mode: mode, size: M.size, players: players };
+    if (entries.length < 2) return null;
+    return Engine.buildConfig(mode, entries);
   }
 
   /* ================= 演示局 ================= */
 
-  var demo = { view: null, state: null, timer: 0, anim: null };
+  var demo = { view: null, state: null, timer: 0, anim: null, round: 0 };
 
-  function demoConfig() {
-    var M = Engine.MODES.classic;
-    return { size: M.size, players: M.seats.map(function (s) { return { color: s.color, start: s.start }; }) };
+  function demoNew() {
+    var mode = demo.round++ % 2 ? 'trigon' : 'classic';
+    demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.map(function (s, i) { return { seat: i }; })));
+    demo.anim = null;
+    $('demo-label').textContent = '电脑演示局 · ' + MODE_LABEL[mode];
   }
 
   function demoStep() {
@@ -571,15 +703,14 @@
         return;
       }
       demo.resetPending = false;
-      demo.state = Engine.createGame(demoConfig());
-      demo.anim = null;
+      demoNew();
     }
     var st = demo.state;
     var move = AI.chooseMove(st, st.current % 2 ? 'normal' : 'hard');
     if (move) {
       var p = st.current;
       Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y });
-      demo.anim = { cells: st.lastMove.cells, player: p, t0: performance.now() };
+      demo.anim = { cells: Engine.placementIndices(st, move.piece, move.orient, move.x, move.y), player: p, t0: performance.now() };
       animate();
     }
     demo.timer = setTimeout(demoStep, 520);
@@ -588,13 +719,13 @@
   function startDemo() {
     if (!demo.view) {
       demo.view = new BoardView($('demo-board'), function () { return demo.state; }, function () {
-        return { anim: demo.anim, lastMove: null };
+        return { anim: demo.anim };
       });
     }
     demo.view.resize();
     if (REDUCED_MOTION) {
       if (!demo.state) {
-        demo.state = Engine.createGame(demoConfig());
+        demoNew();
         for (var k = 0; k < 44 && !demo.state.over; k++) {
           var m = AI.chooseMove(demo.state, 'normal');
           Engine.applyAction(demo.state, { type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y });
@@ -609,8 +740,10 @@
   /* ================= 对局 ================= */
 
   var game = {
+    mode: 'local',
     config: null,
     state: null,
+    gameId: null,
     view: null,
     eventCursor: 0,
     sel: { piece: -1, rot: 0, flip: 0 },
@@ -627,21 +760,36 @@
     paused: false,
     anim: null,
     endTimer: 0,
-    lastWheel: 0
+    lastWheel: 0,
+    turnKey: '',
+    trayKind: ''
   };
 
-  function engineConfig(cfg) { return { size: cfg.size, players: cfg.players }; }
+  // 联机会话；本地对局时为 null
+  var online = null;
+
+  function isOnlineGame() { return game.mode === 'online' && !!online; }
+  function myId() { return online ? online.pid : null; }
   function cur() { return game.state.players[game.state.current]; }
   function humanCount() { return game.state.players.filter(function (p) { return p.type === 'human'; }).length; }
-  function isHumanTurn() { return game.state && !game.state.over && cur().type === 'human'; }
-  function isAITurn() { return game.state && !game.state.over && cur().type === 'ai'; }
+  function isMine(pl) { return pl.type === 'human' && (!isOnlineGame() || pl.owner === myId()); }
+  function canAct() { return !!game.state && !game.state.over && isMine(cur()); }
+  function isLocalAITurn() { return game.mode === 'local' && !!game.state && !game.state.over && cur().type === 'ai'; }
   function colorVar(pl) { return 'var(--p-' + pl.color + ')'; }
+  function cellsToIdx(state, cells) {
+    var cols = state.topo.cols;
+    return cells.map(function (c) { return c[1] * cols + c[0]; });
+  }
+
+  function myPlayers() {
+    return game.state.players.filter(function (p) { return p.type === 'human' && (!isOnlineGame() || p.owner === myId()); });
+  }
 
   function trayOwner() {
-    var st = game.state;
-    if (!st.over && cur().type === 'human') return cur();
-    var humans = st.players.filter(function (p) { return p.type === 'human'; });
-    if (humans.length === 1) return humans[0];
+    if (canAct()) return cur();
+    var mine = myPlayers();
+    if (mine.indexOf(cur()) >= 0) return cur();
+    if (mine.length && (isOnlineGame() || mine.length === 1)) return mine[0];
     return cur();
   }
 
@@ -652,15 +800,17 @@
   }
 
   function saveGame() {
+    if (game.mode !== 'local') return;
     if (!game.state || game.state.over) save(STORE_SAVE, null);
     else save(STORE_SAVE, { v: 1, config: game.config, actions: game.state.actions });
   }
 
   function showScreen(name) {
     $('setup').hidden = name !== 'setup';
+    $('lobby').hidden = name !== 'lobby';
     $('game').hidden = name !== 'game';
+    if (name !== 'game') cancelAI();
     if (name === 'setup') {
-      cancelAI();
       renderSetup();
       startDemo();
     } else {
@@ -668,17 +818,21 @@
     }
   }
 
-  function startGame(cfg, actions) {
+  // 进入对局画面（本地或联机）
+  function enterGame(mode, config, actions, gameId) {
     clearTimeout(game.endTimer);
     closeDialog('end-dialog');
-    game.config = cfg;
-    game.state = actions && actions.length ? Engine.replay(engineConfig(cfg), actions) : Engine.createGame(engineConfig(cfg));
+    game.mode = mode;
+    game.config = config;
+    game.gameId = gameId || null;
+    game.state = actions && actions.length ? Engine.replay(config, actions) : Engine.createGame(config);
     game.eventCursor = game.state.events.length;
     game.paused = false;
     game.anim = null;
+    game.turnKey = '';
     resetSelection();
     showScreen('game');
-    buildTray();
+    if (game.trayKind !== game.state.set.kind) buildTray();
     if (!game.view) {
       game.view = new BoardView($('board'), function () { return game.state; }, gameOverlay);
       new ResizeObserver(function () { if (game.view.resize()) game.view.draw(); }).observe($('board'));
@@ -703,7 +857,13 @@
     game.aiToken++;
   }
 
+  function turnKeyOf() {
+    var st = game.state;
+    return st.actions.length + ':' + st.current + ':' + st.over + ':' + cur().type + ':' + (cur().owner || '');
+  }
+
   function onTurnStart(first) {
+    game.turnKey = turnKeyOf();
     resetSelection();
     game.perPiece = null;
     game.anchors = null;
@@ -715,25 +875,30 @@
       return;
     }
     var pl = cur();
-    if (pl.type === 'human') {
+    if (canAct()) {
       game.perPiece = Engine.movesPerPiece(st, st.current);
-      var forb = Engine.forbiddenMask(st.board, st.size, st.current);
-      game.anchors = Engine.anchorMask(st.board, st.size, st.current, pl, forb);
-      if (!first && humanCount() > 1) {
-        toast('轮到 ' + pl.name + '（' + pl.label + '方）');
-        sound('turn');
+      var forb = Engine.forbiddenMask(st.board, st.topo, st.current);
+      game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb);
+      if (!first) {
+        if (isOnlineGame()) {
+          toast('轮到你了（' + pl.label + '方）');
+          sound('turn');
+        } else if (humanCount() > 1) {
+          toast('轮到 ' + pl.name + '（' + pl.label + '方）');
+          sound('turn');
+        }
       }
-    } else {
+    } else if (isLocalAITurn()) {
       scheduleAI();
     }
   }
 
   function scheduleAI() {
     cancelAI();
-    if (game.paused || !isAITurn()) return;
+    if (game.paused || !isLocalAITurn()) return;
     var token = game.aiToken;
     game.aiTimer = setTimeout(function () {
-      if (token !== game.aiToken || !isAITurn()) return;
+      if (token !== game.aiToken || !isLocalAITurn()) return;
       var st = game.state;
       var move = AI.chooseMove(st, cur().level);
       if (!move) {
@@ -750,13 +915,13 @@
     var p = st.current;
     var reason = Engine.applyAction(st, { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y });
     if (reason) return reason;
-    game.anim = { cells: st.lastMove.cells, player: p, t0: performance.now() };
+    game.anim = { cells: cellsToIdx(st, st.lastMove.cells), player: p, t0: performance.now() };
     sound('place', byAI && humanCount() > 0);
     afterAction();
     return null;
   }
 
-  function afterAction() {
+  function processEvents() {
     var st = game.state;
     var notes = [];
     for (; game.eventCursor < st.events.length; game.eventCursor++) {
@@ -764,6 +929,11 @@
       if (ev.type === 'blocked') notes.push(st.players[ev.player].name + ' 已无处可放');
       else if (ev.type === 'resign') notes.push(st.players[ev.player].name + ' 停手了');
     }
+    return notes;
+  }
+
+  function afterAction() {
+    var notes = processEvents();
     saveGame();
     onTurnStart(false);
     if (notes.length) toast(notes.join('；'));
@@ -771,54 +941,174 @@
     animate();
   }
 
+  /* ---------- 联机对局同步 ---------- */
+
+  function sameAction(a, b) {
+    return !!a && !!b && a.type === b.type && a.player === b.player &&
+      (a.type === 'resign' || (a.piece === b.piece && a.orient === b.orient && a.x === b.x && a.y === b.y));
+  }
+
+  function refreshMeta(config) {
+    config.players.forEach(function (cp, i) {
+      var pl = game.state.players[i];
+      if (!pl) return;
+      pl.type = cp.type;
+      pl.level = cp.level;
+      pl.name = cp.name;
+      pl.owner = cp.owner;
+    });
+  }
+
+  function syncOnlineGame(room) {
+    var g = room.game;
+    if (!isOnlineGame() || !game.state || game.gameId !== g.id || $('game').hidden) {
+      enterGame('online', g.config, g.actions, g.id);
+      maybeRunAI();
+      return;
+    }
+    var local = game.state.actions, remote = g.actions;
+    // 自己刚落的子还没写进房间：先不回退
+    if (online.pending && remote.length <= online.pending.at) {
+      refreshMeta(g.config);
+      renderGame();
+      return;
+    }
+    var prefix = local.length <= remote.length;
+    for (var i = 0; prefix && i < local.length; i++) if (!sameAction(local[i], remote[i])) prefix = false;
+    if (prefix && remote.length > local.length) {
+      var placed = false;
+      for (var j = local.length; j < remote.length; j++) {
+        if (Engine.applyAction(game.state, remote[j])) { prefix = false; break; }
+        if (remote[j].type === 'place') placed = true;
+      }
+      if (prefix && placed && game.state.lastMove) {
+        game.anim = { cells: cellsToIdx(game.state, game.state.lastMove.cells), player: game.state.lastMove.player, t0: performance.now() };
+        sound('place', true);
+      }
+    }
+    if (!prefix) {
+      game.state = Engine.replay(g.config, remote);
+      game.eventCursor = game.state.events.length;
+      game.anim = null;
+    }
+    refreshMeta(g.config);
+    var notes = processEvents();
+    if (turnKeyOf() !== game.turnKey) onTurnStart(false);
+    if (notes.length) toast(notes.join('；'));
+    renderGame();
+    animate();
+    maybeRunAI();
+  }
+
+  function onlineSubmit(action) {
+    var st = game.state;
+    var at = st.actions.length;
+    var reason = Engine.applyAction(st, action);
+    if (reason) return reason;
+    if (action.type === 'place') {
+      game.anim = { cells: cellsToIdx(st, st.lastMove.cells), player: st.lastMove.player, t0: performance.now() };
+      sound('place');
+    }
+    online.pending = { at: at };
+    var notes = processEvents();
+    onTurnStart(false);
+    if (notes.length) toast(notes.join('；'));
+    renderGame();
+    animate();
+    var session = online;
+    sendOp({ type: 'act', at: at, action: action }, true).then(function () {
+      if (online !== session) return;
+      online.pending = null;
+      if (online.room && online.room.game) syncOnlineGame(online.room);
+    }, function (err) {
+      if (online !== session) return;
+      online.pending = null;
+      toast(err.code === 'stale' ? '局面已更新，这步没有生效' : err.message, 'warn');
+      game.gameId = null;
+      if (online.room && online.room.game) syncOnlineGame(online.room);
+    });
+    return null;
+  }
+
+  // 共享存储模式下，电脑回合由房主（或在线玩家中的一位）代为落子
+  function maybeRunAI() {
+    if (!online || online.net.serverRunsAI) return;
+    clearTimeout(online.aiTimer);
+    var room = online.room;
+    if (!room || room.status !== 'playing' || !isOnlineGame() || !game.state || game.state.over || online.pending) return;
+    if (cur().type !== 'ai') return;
+    var runner = Online.aiRunner(room, online.peers);
+    var mine = runner === online.pid;
+    var delay = mine ? (SPEED_MS[room.speed] || SPEED_MS.normal) : 12000 + Math.random() * 4000;
+    var rev = room.rev;
+    var session = online;
+    online.aiTimer = setTimeout(function () {
+      if (online !== session || !online.room || online.room.rev !== rev || !game.state || game.state.over || cur().type !== 'ai') return;
+      var move = AI.chooseMove(game.state, cur().level);
+      var action = move ? { type: 'place', piece: move.piece, orient: move.orient, x: move.x, y: move.y } : { type: 'resign' };
+      sendOp({ type: 'act', at: game.state.actions.length, action: action }, true).catch(function () {});
+    }, delay);
+  }
+
   /* ---------- 选择 / 放置 ---------- */
 
   function currentOrient() {
-    return orientFor(game.sel.piece, game.sel.rot, game.sel.flip);
+    return game.state.set.orientFor(game.sel.piece, game.sel.rot, game.sel.flip);
   }
 
   function clampGhost() {
-    if (!game.ghost || game.sel.piece < 0) return;
-    var o = PIECES[game.sel.piece].orients[currentOrient()];
-    var n = game.state.size;
-    game.ghost.x = clamp(game.ghost.x, o.pivot[0], n - o.w + o.pivot[0]);
-    game.ghost.y = clamp(game.ghost.y, o.pivot[1], n - o.h + o.pivot[1]);
+    if (!game.ghost || game.sel.piece < 0 || game.state.topo.kind !== 'square') return;
+    var o = game.state.set.pieces[game.sel.piece].orients[currentOrient()];
+    var topo = game.state.topo;
+    game.ghost.x = clamp(game.ghost.x, o.pivot[0], topo.cols - o.w + o.pivot[0]);
+    game.ghost.y = clamp(game.ghost.y, o.pivot[1], topo.rows - o.h + o.pivot[1]);
   }
 
   function ghostMove() {
     if (game.sel.piece < 0 || !game.ghost) return null;
     var oi = currentOrient();
-    var o = PIECES[game.sel.piece].orients[oi];
-    var x = game.ghost.x - o.pivot[0], y = game.ghost.y - o.pivot[1];
-    return { piece: game.sel.piece, orient: oi, x: x, y: y };
+    var o = game.state.set.pieces[game.sel.piece].orients[oi];
+    var gx = game.ghost.x, gy = game.ghost.y;
+    var pv = o.pivot;
+    // 三角格：光标格与对准格的尖朝向必须一致，否则换一个朝向相同的格子对准
+    if (game.state.topo.parity && ((gx + gy + pv[0] + pv[1]) & 1)) {
+      var best = null, bd = Infinity;
+      o.cells.forEach(function (c) {
+        if ((gx + gy + c[0] + c[1]) & 1) return;
+        var d = (c[0] - pv[0]) * (c[0] - pv[0]) + (c[1] - pv[1]) * (c[1] - pv[1]);
+        if (d < bd) { bd = d; best = c; }
+      });
+      if (!best) { gx += 1; best = pv; }
+      pv = best;
+    }
+    return { piece: game.sel.piece, orient: oi, x: gx - pv[0], y: gy - pv[1] };
   }
 
   function defaultGhost() {
-    var n = game.state.size, c = (n - 1) / 2;
-    var best = { x: Math.round(c), y: Math.round(c) };
-    if (game.anchors && game.anchors.list.length) {
-      var bd = Infinity;
-      game.anchors.list.forEach(function (idx) {
-        var x = idx % n, y = (idx - x) / n;
-        var d = (x - c) * (x - c) + (y - c) * (y - c);
-        if (d < bd) { bd = d; best = { x: x, y: y }; }
-      });
-    }
-    return best;
+    var topo = game.state.topo;
+    var list = game.anchors && game.anchors.list.length ? game.anchors.list : topo.cells;
+    var best = list[0], bd = Infinity;
+    list.forEach(function (i) {
+      if (topo.centerDist[i] < bd) { bd = topo.centerDist[i]; best = i; }
+    });
+    return { x: best % topo.cols, y: Math.floor(best / topo.cols) };
   }
 
   function gameOverlay() {
     var st = game.state;
-    var ov = { lastMove: st.lastMove, anim: game.anim };
-    if (isHumanTurn()) {
+    var ov = { lastMove: st.lastMove ? cellsToIdx(st, st.lastMove.cells) : null, anim: game.anim };
+    if (canAct()) {
       var pl = cur();
       var color = palette.colors[pl.color];
       if (prefs.hints && game.anchors) ov.anchors = { list: game.anchors.list, color: color };
-      if (game.hint) ov.hint = { cells: Engine.placementCells(game.hint.piece, game.hint.orient, game.hint.x, game.hint.y), color: palette.ink };
+      if (game.hint) ov.hint = { cells: Engine.placementIndices(st, game.hint.piece, game.hint.orient, game.hint.x, game.hint.y), color: palette.ink };
       var m = ghostMove();
       if (m) {
+        var topo = st.topo;
+        var cells = Engine.placementCells(st, m.piece, m.orient, m.x, m.y)
+          .filter(function (c) { return c[0] >= 0 && c[1] >= 0 && c[0] < topo.cols && c[1] < topo.rows && topo.valid[c[1] * topo.cols + c[0]]; });
         ov.ghost = {
-          cells: Engine.placementCells(m.piece, m.orient, m.x, m.y),
+          cells: cellsToIdx(st, cells),
           color: color,
           valid: Engine.checkPlacement(st, st.current, m.piece, m.orient, m.x, m.y) === null
         };
@@ -828,7 +1118,7 @@
   }
 
   function selectPiece(pi) {
-    if (!isHumanTurn() || !cur().remaining[pi]) return;
+    if (!canAct() || !cur().remaining[pi]) return;
     if (game.sel.piece === pi) {
       game.sel.piece = -1;
       game.hint = null;
@@ -847,8 +1137,9 @@
   }
 
   function rotate(d) {
-    if (game.sel.piece < 0 || !isHumanTurn()) return;
-    game.sel.rot = (game.sel.rot + d + 4) % 4;
+    if (game.sel.piece < 0 || !canAct()) return;
+    var R = game.state.set.rotations;
+    game.sel.rot = (game.sel.rot + d + R) % R;
     clampGhost();
     renderSelection();
     drawBoard();
@@ -856,16 +1147,17 @@
 
   // 始终沿屏幕竖轴镜像：F·R^k = R^-k·F
   function flip() {
-    if (game.sel.piece < 0 || !isHumanTurn()) return;
+    if (game.sel.piece < 0 || !canAct()) return;
+    var R = game.state.set.rotations;
     game.sel.flip ^= 1;
-    game.sel.rot = (4 - game.sel.rot) % 4;
+    game.sel.rot = (R - game.sel.rot) % R;
     clampGhost();
     renderSelection();
     drawBoard();
   }
 
   function tryPlace() {
-    if (!isHumanTurn()) return false;
+    if (!canAct()) return false;
     var m = ghostMove();
     if (!m) {
       toast(game.sel.piece < 0 ? '先选一块棋子' : '先在棋盘上选位置');
@@ -878,26 +1170,29 @@
       return false;
     }
     resetSelection();
-    commitMove(m, false);
+    if (isOnlineGame()) onlineSubmit({ type: 'place', piece: m.piece, orient: m.orient, x: m.x, y: m.y });
+    else commitMove(m, false);
     return true;
   }
 
   function giveHint() {
-    if (!isHumanTurn()) return;
+    if (!canAct()) return;
     var move = AI.chooseMove(game.state, 'hard');
     if (!move) return;
-    var o = PIECES[move.piece].orients[move.orient];
+    var piece = game.state.set.pieces[move.piece];
+    var o = piece.orients[move.orient];
     game.sel = { piece: move.piece, rot: o.rot, flip: o.flip };
     game.ghost = { x: move.x + o.pivot[0], y: move.y + o.pivot[1] };
     game.hint = move;
     game.ghostByTap = false;
     game.hintLockCell = game.hover ? { x: game.hover.x, y: game.hover.y } : null;
-    toast('试试「' + PIECES[move.piece].name + '」放在虚线框的位置');
+    toast('试试「' + piece.name + '」放在虚线框的位置');
     renderDock();
     animate();
   }
 
   function undo() {
+    if (game.mode !== 'local') return;
     var st = game.state;
     var i = st.actions.length - 1;
     while (i >= 0 && st.players[st.actions[i].player].type !== 'human') i--;
@@ -905,7 +1200,7 @@
     cancelAI();
     clearTimeout(game.endTimer);
     closeDialog('end-dialog');
-    game.state = Engine.replay(engineConfig(game.config), st.actions.slice(0, i));
+    game.state = Engine.replay(game.config, st.actions.slice(0, i));
     game.eventCursor = game.state.events.length;
     game.anim = null;
     saveGame();
@@ -915,12 +1210,16 @@
   }
 
   function resign() {
-    if (!isHumanTurn()) return;
+    if (!canAct()) return;
     var pl = cur();
     confirmBox('确定停手？', pl.name + ' 将不再落子，剩下的 ' + pl.remainingSquares + ' 格会计入扣分。其他玩家继续对局。', '停手').then(function (ok) {
-      if (!ok || !isHumanTurn() || cur() !== pl) return;
-      Engine.applyAction(game.state, { type: 'resign' });
+      if (!ok || !canAct() || cur() !== pl) return;
       resetSelection();
+      if (isOnlineGame()) {
+        onlineSubmit({ type: 'resign' });
+        return;
+      }
+      Engine.applyAction(game.state, { type: 'resign' });
       afterAction();
     });
   }
@@ -930,13 +1229,13 @@
   var rafId = 0;
   function animate() {
     if (rafId) return;
-    rafId = requestAnimationFrame(function tick(now) {
+    rafId = requestAnimationFrame(function (now) {
       rafId = 0;
       var more = false;
-      if (game.view && !$('game').hidden) {
+      if (game.view && !$('game').hidden && game.state) {
         if (game.anim && now - game.anim.t0 >= DROP_MS) game.anim = null;
         game.view.draw(now);
-        if (game.anim || (game.hint && !REDUCED_MOTION && isHumanTurn())) more = true;
+        if (game.anim || (game.hint && !REDUCED_MOTION && canAct())) more = true;
       }
       if (demo.view && !$('setup').hidden) {
         if (demo.anim && now - demo.anim.t0 >= DROP_MS) demo.anim = null;
@@ -954,24 +1253,29 @@
   }
 
   function renderGame() {
-    if (!game.state) return;
+    if (!game.state || $('game').hidden) return;
     renderTurn();
     renderPlayers();
     renderDock();
     drawBoard();
   }
 
+  function peersKnown() { return !!(online && online.peers); }
+  function isPeerOnline(id) { return !peersKnown() || online.peers.indexOf(id) >= 0; }
+
   function renderTurn() {
     var st = game.state;
     var root = $('game');
     var text, color;
+    var onlineMode = isOnlineGame();
     if (st.over) {
       text = '对局结束';
       color = 'var(--ink)';
     } else {
       var pl = cur();
       color = colorVar(pl);
-      if (pl.type === 'human') text = humanCount() > 1 ? '轮到 ' + pl.name + '（' + pl.label + '方）' : '轮到你了（' + pl.label + '方）';
+      if (canAct()) text = !onlineMode && humanCount() > 1 ? '轮到 ' + pl.name + '（' + pl.label + '方）' : '轮到你了（' + pl.label + '方）';
+      else if (pl.type === 'human') text = '等待 ' + pl.name + '（' + pl.label + '方）落子' + (onlineMode && !isPeerOnline(pl.owner) ? ' · 已离线' : '');
       else text = pl.name + (game.paused ? ' · 已暂停' : ' 思考中…');
     }
     root.style.setProperty('--turn', color);
@@ -979,45 +1283,68 @@
     var placed = st.actions.filter(function (a) { return a.type === 'place'; }).length;
     $('turn-move').textContent = st.over ? '共 ' + placed + ' 手' : '第 ' + (placed + 1) + ' 手';
 
-    var hasHuman = humanCount() > 0;
-    var canUndo = st.actions.some(function (a) { return st.players[a.player].type === 'human'; });
+    var hasHuman = myPlayers().length > 0;
+    var canUndo = !onlineMode && st.actions.some(function (a) { return st.players[a.player].type === 'human'; });
     $('undo-btn').disabled = !canUndo;
-    $('undo-btn').hidden = !hasHuman;
+    $('undo-btn').hidden = onlineMode || !hasHuman;
     $('hint-btn').hidden = !hasHuman;
-    $('hint-btn').disabled = !isHumanTurn();
-    $('pause-btn').hidden = hasHuman || st.over;
+    $('hint-btn').disabled = !canAct();
+    $('pause-btn').hidden = onlineMode || humanCount() > 0 || st.over;
     $('pause-btn').textContent = game.paused ? '继续' : '暂停';
     $('sound-btn').setAttribute('aria-pressed', prefs.sound ? 'true' : 'false');
+    $('menu-btn').textContent = onlineMode ? '‹ 离开' : '‹ 菜单';
+    $('menu-btn').title = onlineMode ? '离开房间' : '返回菜单（对局自动保存）';
+    var chip = $('room-chip');
+    chip.hidden = !onlineMode;
+    if (onlineMode) {
+      var n = online.peers ? online.peers.length : null;
+      chip.textContent = '房间 ' + online.code + (online.connected ? (n ? ' · ' + n + ' 人在线' : '') : ' · 重新连接中');
+      chip.classList.toggle('off', !online.connected);
+    }
   }
 
   function renderPlayers() {
     var st = game.state;
-    var box = $('players');
-    box.innerHTML = st.players.map(function (pl, p) {
+    var onlineMode = isOnlineGame();
+    var amHost = onlineMode && online.room && online.room.host === myId();
+    var total = st.set.total;
+    $('players').innerHTML = st.players.map(function (pl, p) {
       var current = !st.over && p === st.current;
       var stateText;
       if (pl.resigned) stateText = '已停手';
       else if (pl.done) stateText = st.over ? '' : '无处可放';
-      else if (current) stateText = pl.type === 'human' ? '正在落子' : (game.paused ? '已暂停' : '<span class="thinking">思考中</span>');
+      else if (current) stateText = pl.type === 'human' ? (isMine(pl) ? '正在落子' : '等待落子') : (game.paused ? '已暂停' : '<span class="thinking">思考中</span>');
       else stateText = '剩 ' + pl.remaining.filter(Boolean).length + ' 块';
+      var dot = '';
+      if (onlineMode && pl.type === 'human' && peersKnown()) {
+        var on = isPeerOnline(pl.owner);
+        dot = '<span class="pcard-online' + (on ? '' : ' off') + '" title="' + (on ? '在线' : '离线') + '"></span>';
+        if (!on && amHost && !pl.done && !st.over) {
+          stateText += '<button type="button" class="btn" data-takeover="' + p + '">交给电脑</button>';
+        }
+      }
       var score = Engine.scoreOf(pl);
-      var placed = Engine.TOTAL_SQUARES - pl.remainingSquares;
-      var kind = pl.type === 'human' ? '玩家' : '电脑 · ' + LEVEL_LABEL[pl.level];
+      var placed = total - pl.remainingSquares;
+      var kind = pl.type === 'human' ? (onlineMode && pl.owner === myId() ? '你' : '玩家') : '电脑 · ' + LEVEL_LABEL[pl.level];
       return '<div class="pcard' + (current ? ' current' : '') + (pl.done ? ' done' : '') + '" style="--c:' + colorVar(pl) + '">' +
         '<span class="pcard-swatch" aria-hidden="true"></span>' +
-        '<div class="pcard-name">' + escapeHtml(pl.name) + '<small>' + pl.label + '方 · ' + kind + '</small></div>' +
+        '<div class="pcard-name">' + dot + escapeHtml(pl.name) + '<small>' + pl.label + '方 · ' + kind + '</small></div>' +
         '<div class="pcard-score" title="当前得分">' + (score > 0 ? '+' : '') + score + '<small>已放 ' + placed + ' 格</small></div>' +
-        '<div class="pcard-bar" aria-hidden="true"><i style="--w:' + (placed / Engine.TOTAL_SQUARES * 100).toFixed(1) + '%"></i></div>' +
+        '<div class="pcard-bar" aria-hidden="true"><i style="--w:' + (placed / total * 100).toFixed(1) + '%"></i></div>' +
         '<div class="pcard-state">' + stateText + '</div>' +
         '</div>';
     }).join('');
   }
 
   function buildTray() {
+    var set = game.state.set;
+    game.trayKind = set.kind;
+    var order = set.pieces.map(function (p) { return p.index; })
+      .sort(function (a, b) { return set.pieces[b].size - set.pieces[a].size || a - b; });
     var tray = $('tray');
     tray.innerHTML = '';
-    TRAY_ORDER.forEach(function (pi) {
-      var piece = PIECES[pi];
+    order.forEach(function (pi) {
+      var piece = set.pieces[pi];
       var b = document.createElement('button');
       b.type = 'button';
       b.className = 'piece-btn';
@@ -1025,7 +1352,7 @@
       b.dataset.piece = pi;
       b.setAttribute('role', 'option');
       b.setAttribute('aria-label', piece.name + '，' + piece.size + ' 格');
-      b.innerHTML = pieceSVG(piece.orients[0].cells, 5);
+      b.innerHTML = pieceSVG(piece.orients[piece.display], set.maxBox);
       b.addEventListener('click', function () { selectPiece(pi); });
       tray.appendChild(b);
     });
@@ -1034,13 +1361,14 @@
   function renderDock() {
     var st = game.state;
     var owner = trayOwner();
-    var active = isHumanTurn() && owner === cur();
+    var active = canAct() && owner === cur();
     var dock = $('dock');
     dock.classList.toggle('inactive', !active);
     dock.style.setProperty('--c', colorVar(owner));
-    $('dock-title').textContent = owner.label + '方 · ' + owner.name + (active ? '' : st.over ? '' : owner.type === 'ai' ? '（电脑）' : '（等待中）');
+    $('dock-title').textContent = owner.label + '方 · ' + owner.name + (active || st.over ? '' : owner.type === 'ai' ? '（电脑）' : '（等待中）');
     var left = owner.remaining.filter(Boolean).length;
     $('dock-count').textContent = '剩 ' + left + ' 块 · ' + owner.remainingSquares + ' 格';
+    var set = st.set;
     $('tray').querySelectorAll('.piece-btn').forEach(function (b) {
       var pi = +b.dataset.piece;
       var used = !owner.remaining[pi];
@@ -1049,7 +1377,8 @@
       b.classList.toggle('stuck', !!stuck);
       b.disabled = used || !active;
       b.setAttribute('aria-selected', active && game.sel.piece === pi ? 'true' : 'false');
-      b.title = used ? '已放置' : stuck ? PIECES[pi].name + '：当前没有可放的位置' : PIECES[pi].name + '（' + PIECES[pi].size + ' 格）';
+      var piece = set.pieces[pi];
+      b.title = used ? '已放置' : stuck ? piece.name + '：当前没有可放的位置' : piece.name + '（' + piece.size + ' 格）';
     });
     $('resign-btn').hidden = !active;
     renderSelection();
@@ -1057,12 +1386,13 @@
 
   function renderSelection() {
     var prev = $('sel-preview');
-    var active = isHumanTurn();
+    var active = canAct();
     var has = active && game.sel.piece >= 0;
     if (has) {
-      var o = PIECES[game.sel.piece].orients[currentOrient()];
-      prev.innerHTML = pieceSVG(o.cells, 5);
-      prev.setAttribute('aria-label', '已选：' + PIECES[game.sel.piece].name);
+      var set = game.state.set;
+      var o = set.pieces[game.sel.piece].orients[currentOrient()];
+      prev.innerHTML = pieceSVG(o, set.maxBox);
+      prev.setAttribute('aria-label', '已选：' + set.pieces[game.sel.piece].name);
     } else {
       prev.textContent = active ? '从下方选择棋子' : game.state.over ? '对局结束' : '等待其他玩家';
       prev.removeAttribute('aria-label');
@@ -1072,9 +1402,7 @@
   }
 
   function updatePlaceButton() {
-    var m = isHumanTurn() ? ghostMove() : null;
-    var btn = $('place-btn');
-    btn.disabled = !m;
+    $('place-btn').disabled = !(canAct() && ghostMove());
   }
 
   /* ---------- 提示条 ---------- */
@@ -1085,7 +1413,6 @@
     el.textContent = msg;
     el.className = 'toast' + (kind ? ' ' + kind : '');
     el.hidden = false;
-    // 重新触发入场动画
     void el.offsetWidth;
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.hidden = true; }, Math.max(1600, msg.length * 110));
@@ -1111,6 +1438,7 @@
 
   var confirmResolve = null;
   function confirmBox(title, text, yesLabel) {
+    if (confirmResolve) finishConfirm(false);
     $('confirm-title').textContent = title;
     $('confirm-text').textContent = text;
     $('confirm-yes').textContent = yesLabel || '确定';
@@ -1124,13 +1452,13 @@
 
   function showEnd() {
     var st = game.state;
-    if (!st.over) return;
+    if (!st || !st.over) return;
     var rows = Engine.standings(st);
     var winners = rows.filter(function (r) { return r.rank === 1; });
-    var humans = st.players.filter(function (p) { return p.type === 'human'; });
+    var mine = rows.filter(function (r) { return isMine(r.player); });
     var title;
-    if (humans.length === 1) {
-      var me = rows.filter(function (r) { return r.player.type === 'human'; })[0];
+    if (mine.length === 1 && (isOnlineGame() || humanCount() === 1)) {
+      var me = mine[0];
       title = me.rank === 1 ? (winners.length > 1 ? '并列第一！' : '你赢了！') : '你获得第 ' + me.rank + ' 名';
     } else {
       title = winners.length > 1
@@ -1149,24 +1477,344 @@
         '<td class="num score">' + (r.score > 0 ? '+' : '') + r.score + '</td>' +
         '</tr>';
     }).join('');
+    var onlineMode = isOnlineGame();
+    var amHost = onlineMode && online.room && online.room.host === myId();
+    $('end-again').disabled = onlineMode && !amHost;
+    $('end-again').textContent = onlineMode && !amHost ? '等待房主再开' : '再来一局';
+    $('end-menu').textContent = onlineMode ? '离开房间' : '返回菜单';
     renderGame();
     openDialog('end-dialog');
     sound('win');
   }
 
-  /* ================= 事件绑定 ================= */
+  /* ================= 联机 ================= */
 
-  function sameCell(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y; }
+  var netInfo = { ready: false, net: null, reason: null, promise: null };
+
+  function ensureNet() {
+    if (!netInfo.promise) {
+      netInfo.promise = Net.detect().then(function (r) {
+        netInfo.ready = true;
+        netInfo.net = r.net;
+        netInfo.reason = r.reason;
+        renderOnlinePanel();
+        return r;
+      }, function () {
+        netInfo.ready = true;
+        netInfo.reason = 'error';
+        renderOnlinePanel();
+      });
+    }
+    return netInfo.promise;
+  }
+
+  function canWrite() { return !(netInfo.net && netInfo.net.canWrite === false); }
+
+  function renderOnlinePanel() {
+    var note = $('online-note');
+    var net = netInfo.net;
+    var usable = !!net;
+    $('create-room').disabled = !usable || !canWrite();
+    $('join-room').disabled = !usable;
+    $('join-code').disabled = !usable;
+    $('nick').value = prefs.nick;
+    if (!netInfo.ready) note.textContent = '正在检查联机功能…';
+    else if (net && net.kind === 'artifact') {
+      note.textContent = canWrite()
+        ? '这个页面自带联机：建房后把房间号发给朋友。朋友需要能打开本页面，并且有“可编辑”或“参与者”权限。'
+        : '你对这个页面只有查看权限：可以输入房间号观战，但不能建房或入座。请页面主人把你设为可编辑。';
+    } else if (net) note.textContent = '已连上联机服务器。能打开这个网址的朋友都可以用房间号加入。';
+    else if (netInfo.reason === 'file' || netInfo.reason === 'static') {
+      note.innerHTML = '联机需要服务器：在项目目录运行 <code>node server.js</code>，再用浏览器打开 <code>http://localhost:8080</code>；同一网络里的朋友访问你电脑的局域网地址即可。';
+    } else note.textContent = '这个页面没有开启联机功能。';
+    var last = load(STORE_ONLINE);
+    var rejoin = $('rejoin-room');
+    rejoin.hidden = !(usable && last && last.code && !online);
+    if (!rejoin.hidden) rejoin.textContent = '回到房间 ' + last.code;
+  }
+
+  function showOnlineError(msg) {
+    var el = $('online-error');
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  function tokenFor(code) {
+    var map = load(STORE_TOKENS) || {};
+    if (!map[code] || typeof map[code] !== 'string') {
+      map[code] = Net.randomToken();
+      var keys = Object.keys(map);
+      if (keys.length > 12) delete map[keys[0]];
+      save(STORE_TOKENS, map);
+    }
+    return map[code];
+  }
+
+  function setTokenFor(code, token) {
+    var map = load(STORE_TOKENS) || {};
+    map[code] = token;
+    save(STORE_TOKENS, map);
+  }
+
+  function nickName() { return Online.cleanName(prefs.nick) || '玩家'; }
+
+  function setOnlineBusy(busy) {
+    ['create-room', 'join-room', 'rejoin-room'].forEach(function (id) { $(id).disabled = busy || !netInfo.net; });
+    if (!busy) renderOnlinePanel();
+  }
+
+  function createOnlineRoom() {
+    var net = netInfo.net;
+    if (!net) return;
+    unlockAudio();
+    showOnlineError(null);
+    setOnlineBusy(true);
+    var token = Net.randomToken();
+    net.create(token, nickName(), prefs.mode).then(function (code) {
+      setTokenFor(code, token);
+      return joinRoom(code, { autoClaim: false });
+    }).catch(function (e) {
+      showOnlineError(e.message || '建房失败，请重试');
+    }).then(function () { setOnlineBusy(false); });
+  }
+
+  function joinRoom(code, opts) {
+    var net = netInfo.net;
+    if (!net) return Promise.resolve();
+    unlockAudio();
+    showOnlineError(null);
+    return net.exists(code).then(function (ok) {
+      if (!ok) throw new Error('找不到房间 ' + code + '，请检查房间号');
+      if (online) closeSession(false);
+      var token = tokenFor(code);
+      online = {
+        net: net,
+        code: code,
+        token: token,
+        pid: null,
+        room: null,
+        peers: null,
+        connected: true,
+        pending: null,
+        aiTimer: 0,
+        hostMissingSince: 0,
+        hostTried: -1,
+        autoClaim: !(opts && opts.autoClaim === false),
+        tick: setInterval(onlineTick, 3000)
+      };
+      save(STORE_ONLINE, { code: code });
+      var session = online;
+      function live(fn) {
+        return function (x) { if (online === session) fn(x); };
+      }
+      net.connect(code, token, {
+        onIdentity: live(function (id) { online.pid = id; renderOnlineViews(); }),
+        onRoom: live(onRoom),
+        onPeers: live(function (ids) { online.peers = ids; renderOnlineViews(); maybeRunAI(); }),
+        onConnection: live(function (c) { online.connected = c; renderOnlineViews(); }),
+        onGone: live(function () {
+          closeSession(true);
+          save(STORE_ONLINE, null);
+          prefs.tab = 'online';
+          showScreen('setup');
+          showOnlineError('房间 ' + code + ' 已解散');
+        }),
+        onError: live(function (msg) { lobbyError(msg); })
+      });
+      game.mode = 'online';
+      showScreen('lobby');
+      renderLobby();
+    }).catch(function (e) {
+      showOnlineError(e.message || '加入失败，请重试');
+    });
+  }
+
+  function onRoom(room) {
+    online.room = room;
+    if (online.autoClaim && room.status === 'lobby' && online.pid && canWrite()) {
+      online.autoClaim = false;
+      var hasSeat = room.seats.some(function (s) { return s.owner === online.pid; });
+      var free = room.seats.findIndex(function (s) { return s.kind === 'open' && !s.owner; });
+      if (!hasSeat && free >= 0) sendOp({ type: 'claim', seat: free, name: nickName() }, true).catch(function () {});
+    }
+    if (room.status === 'lobby') {
+      if ($('lobby').hidden) {
+        closeDialog('end-dialog');
+        clearTimeout(game.endTimer);
+        game.state = null;
+        game.gameId = null;
+        showScreen('lobby');
+      }
+      renderLobby();
+    } else {
+      syncOnlineGame(room);
+    }
+  }
+
+  function renderOnlineViews() {
+    if (!online) return;
+    if (!$('lobby').hidden) renderLobby();
+    if (!$('game').hidden && game.state) renderGame();
+  }
+
+  function onlineTick() {
+    if (!online || !online.room || !online.peers || !online.pid) return;
+    var room = online.room;
+    if (online.peers.indexOf(room.host) >= 0) {
+      online.hostMissingSince = 0;
+      return;
+    }
+    if (!online.hostMissingSince) {
+      online.hostMissingSince = Date.now();
+      return;
+    }
+    if (Date.now() - online.hostMissingSince < 8000 || online.hostTried === room.rev) return;
+    var owners = Online.seatOwners(room).filter(function (id) { return online.peers.indexOf(id) >= 0; }).sort();
+    if (owners[0] !== online.pid) return;
+    online.hostTried = room.rev;
+    sendOp({ type: 'host' }, true).then(function () { toast('原房主已离线，你成为了房主'); }, function () {});
+  }
+
+  function sendOp(op, quiet) {
+    if (!online) return Promise.reject(new Error('不在房间里'));
+    return online.net.op(op).catch(function (err) {
+      if (!quiet && err.code !== 'stale') lobbyError(err.message);
+      throw err;
+    });
+  }
+
+  function lobbyError(msg) {
+    if (!$('lobby').hidden) {
+      var el = $('lobby-error');
+      el.textContent = msg;
+      el.hidden = !msg;
+    } else if (!$('game').hidden) {
+      toast(msg, 'warn');
+    }
+  }
+
+  function closeSession(notify) {
+    if (!online) return;
+    var o = online;
+    online = null;
+    clearInterval(o.tick);
+    clearTimeout(o.aiTimer);
+    o.net.disconnect();
+    if (!notify) o.net.opAt(o.code, o.token, { type: 'leave' }).catch(function () {});
+    game.mode = 'local';
+    game.state = null;
+    game.gameId = null;
+  }
+
+  function leaveRoom() {
+    var playing = online && online.room && online.room.status === 'playing' && myPlayers().length && !game.state.over;
+    var go = function () {
+      closeSession(false);
+      save(STORE_ONLINE, null);
+      closeDialog('end-dialog');
+      prefs.tab = 'online';
+      showScreen('setup');
+    };
+    if (!playing) return go();
+    confirmBox('离开房间？', '对局还在进行。离开后你的棋子会停在原地，房主可以把你的座位交给电脑。', '离开').then(function (ok) {
+      if (ok) go();
+    });
+  }
+
+  function renderLobby() {
+    if (!online) return;
+    $('lobby-code').textContent = online.code;
+    var conn = $('lobby-conn');
+    conn.textContent = online.connected ? '已连接' : '重新连接中…';
+    conn.classList.toggle('off', !online.connected);
+    var room = online.room;
+    var seatsEl = $('lobby-seats');
+    if (!room || !online.pid) {
+      seatsEl.innerHTML = '<li class="seat"><span class="seat-swatch"></span><div class="ls-main"><b>正在进入房间…</b></div></li>';
+      $('lobby-start').hidden = true;
+      return;
+    }
+    var me = online.pid;
+    var isHost = room.host === me;
+    var M = Engine.MODES[room.mode];
+    var known = peersKnown();
+
+    $('lobby-mode').innerHTML = MODE_LIST.map(function (m) {
+      return '<label><input type="radio" name="lobby-mode" id="lobby-mode-' + m + '" value="' + m + '"' + (room.mode === m ? ' checked' : '') +
+        (isHost ? '' : ' disabled') + '><span>' + MODE_LABEL[m] + '</span></label>';
+    }).join('');
+
+    seatsEl.innerHTML = M.seats.map(function (seat, i) {
+      var s = room.seats[i];
+      var mine = s.owner === me;
+      var title, sub;
+      if (s.kind === 'off') { title = '空位'; sub = '本局不参战'; }
+      else if (s.kind === 'ai') { title = seat.label + '方电脑'; sub = '电脑 · ' + LEVEL_LABEL[s.level]; }
+      else if (s.owner) {
+        title = s.name || '玩家';
+        sub = (mine ? '你' : '玩家') + (s.owner === room.host ? ' · 房主' : '') + (known ? (isPeerOnline(s.owner) ? ' · 在线' : ' · 离线') : '');
+      } else { title = '等待玩家入座'; sub = '空着的玩家座位'; }
+      var actions = '';
+      if (s.kind === 'open' && !s.owner && canWrite()) actions += '<button type="button" class="btn primary" data-claim="' + i + '">入座</button>';
+      if (mine) actions += '<button type="button" class="btn" data-release="' + i + '">离座</button>';
+      var hostCtl = '';
+      if (isHost) {
+        var kinds = [['open', '玩家'], ['ai', '电脑']];
+        if (room.mode !== 'duo') kinds.push(['off', '空位']);
+        actions += '<div class="seg small" role="radiogroup" aria-label="' + seat.label + '方">' + kinds.map(function (k) {
+          return '<label><input type="radio" name="lobby-kind-' + i + '" value="' + k[0] + '" data-kind="' + i + '"' + (s.kind === k[0] ? ' checked' : '') + '><span>' + k[1] + '</span></label>';
+        }).join('') + '</div>';
+        if (s.kind === 'ai') {
+          hostCtl = '<div class="seat-level">难度 <div class="seg small" role="radiogroup" aria-label="电脑难度">' + Object.keys(LEVEL_LABEL).map(function (lv) {
+            return '<label><input type="radio" name="lobby-level-' + i + '" value="' + lv + '" data-level="' + i + '"' + (s.level === lv ? ' checked' : '') + '><span>' + LEVEL_LABEL[lv] + '</span></label>';
+          }).join('') + '</div></div>';
+        }
+      }
+      return '<li class="seat lobby-seat' + (s.kind === 'off' ? ' off' : '') + (mine ? ' mine' : '') + '" style="--c: var(--p-' + seat.color + ')">' +
+        '<span class="seat-swatch" aria-hidden="true">' + seat.label + '</span>' +
+        '<div class="ls-main"><b>' + escapeHtml(title) + '</b><small>' + escapeHtml(sub) + '</small></div>' +
+        '<div class="ls-actions">' + actions + '</div>' + hostCtl +
+        '</li>';
+    }).join('');
+
+    $('lobby-speed').value = room.speed;
+    $('lobby-speed').disabled = !isHost;
+    if (document.activeElement !== $('lobby-nick')) $('lobby-nick').value = prefs.nick;
+
+    var start = $('lobby-start');
+    var wait = $('lobby-wait');
+    start.hidden = !isHost;
+    if (isHost) {
+      var check = Online.applyOp(room, { type: 'start' }, me, { now: Date.now() });
+      start.disabled = !!check.error;
+      wait.textContent = check.error || '';
+    } else {
+      wait.textContent = '等待房主开始对局…';
+    }
+
+    var people = $('lobby-people');
+    var ids = known ? online.peers.slice() : Online.seatOwners(room);
+    if (ids.indexOf(me) < 0) ids.unshift(me);
+    people.innerHTML = ids.map(function (id) {
+      var seatIdx = room.seats.findIndex(function (s) { return s.owner === id; });
+      var name = seatIdx >= 0 ? room.seats[seatIdx].name : '观众';
+      var color = seatIdx >= 0 ? 'var(--p-' + M.seats[seatIdx].color + ')' : 'var(--ink-soft)';
+      var tag = (id === me ? '你' : '') + (id === room.host ? (id === me ? ' · ' : '') + '房主' : '');
+      return '<li style="--c:' + color + '"><i></i><span>' + escapeHtml(name) + '</span><small>' + tag + '</small></li>';
+    }).join('');
+  }
+
+  /* ================= 事件绑定 ================= */
 
   function bindBoard() {
     var canvas = $('board');
 
     canvas.addEventListener('pointermove', function (e) {
       if (!game.state) return;
-      var cell = game.view.cellAt(e.clientX, e.clientY, game.state.size);
+      var cell = game.view.cellAt(e.clientX, e.clientY, game.state.topo);
       if (e.pointerType === 'mouse') {
         game.hover = cell;
-        if (!isHumanTurn() || game.sel.piece < 0 || !cell) return;
+        if (!canAct() || game.sel.piece < 0 || !cell) return;
         if (game.hintLockCell) {
           if (sameCell(cell, game.hintLockCell)) return;
           game.hintLockCell = null;
@@ -1192,8 +1840,8 @@
       if (e.button === 2) { e.preventDefault(); rotate(1); return; }
       if (e.button === 1) { e.preventDefault(); flip(); return; }
       if (e.button !== 0) return;
-      if (!isHumanTurn()) return;
-      var cell = game.view.cellAt(e.clientX, e.clientY, game.state.size);
+      if (!canAct()) return;
+      var cell = game.view.cellAt(e.clientX, e.clientY, game.state.topo);
       if (game.sel.piece < 0) {
         toast('先在托盘里选一块棋子');
         return;
@@ -1231,13 +1879,29 @@
     canvas.addEventListener('pointercancel', function () { game.touch = null; });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     canvas.addEventListener('wheel', function (e) {
-      if (!isHumanTurn() || game.sel.piece < 0) return;
+      if (!canAct() || game.sel.piece < 0) return;
       e.preventDefault();
       var now = performance.now();
       if (now - game.lastWheel < 140) return;
       game.lastWheel = now;
       rotate(e.deltaY > 0 ? 1 : -1);
     }, { passive: false });
+  }
+
+  function moveGhostBy(dx, dy) {
+    var topo = game.state.topo;
+    if (!game.ghost) {
+      game.ghost = defaultGhost();
+    } else {
+      var nx = game.ghost.x + dx, ny = game.ghost.y + dy;
+      if (topo.kind === 'tri') {
+        if (nx < 0 || ny < 0 || nx >= topo.cols || ny >= topo.rows || !topo.valid[ny * topo.cols + nx]) return;
+      }
+      game.ghost = { x: nx, y: ny };
+    }
+    game.hintLockCell = null;
+    clampGhost();
+    drawBoard();
   }
 
   function bindKeys() {
@@ -1260,18 +1924,15 @@
         if (game.sel.piece >= 0) { game.sel.piece = -1; game.hint = null; renderDock(); drawBoard(); }
         return;
       }
-      var arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-      if (arrows[key] && isHumanTurn() && game.sel.piece >= 0) {
+      var tri = game.state.topo.kind === 'tri';
+      var arrows = { ArrowLeft: [tri ? -2 : -1, 0], ArrowRight: [tri ? 2 : 1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      if (arrows[key] && canAct() && game.sel.piece >= 0) {
         e.preventDefault();
-        if (!game.ghost) game.ghost = defaultGhost();
-        else { game.ghost.x += arrows[key][0]; game.ghost.y += arrows[key][1]; }
-        game.hintLockCell = null;
-        clampGhost();
-        drawBoard();
+        moveGhostBy(arrows[key][0], arrows[key][1]);
         return;
       }
       var focusOk = document.activeElement === document.body || document.activeElement === $('board');
-      if ((key === 'Enter' || key === ' ') && focusOk && isHumanTurn() && game.sel.piece >= 0) {
+      if ((key === 'Enter' || key === ' ') && focusOk && canAct() && game.sel.piece >= 0) {
         e.preventDefault();
         if (!game.ghost) { game.ghost = defaultGhost(); clampGhost(); drawBoard(); }
         else tryPlace();
@@ -1280,17 +1941,26 @@
   }
 
   function bindUI() {
-    $('setup-form').addEventListener('submit', function (e) {
+    $('local-panel').addEventListener('submit', function (e) {
       e.preventDefault();
       unlockAudio();
-      var cfg = buildConfig();
+      var cfg = buildLocalConfig();
       if (!cfg) {
         var err = $('setup-error');
         err.textContent = '至少需要两方参战，请把一个空位改成玩家或电脑。';
         err.hidden = false;
         return;
       }
-      startGame(cfg);
+      enterGame('local', cfg);
+    });
+
+    [['tab-local', 'local'], ['tab-online', 'online']].forEach(function (t) {
+      $(t[0]).addEventListener('click', function () {
+        prefs.tab = t[1];
+        savePrefs();
+        renderSetup();
+        if (t[1] === 'online') ensureNet();
+      });
     });
 
     document.querySelectorAll('input[name="mode"]').forEach(function (r) {
@@ -1308,15 +1978,91 @@
       unlockAudio();
       var s = loadSaved();
       if (!s) { renderSetup(); return; }
-      startGame(s.config, s.actions);
+      enterGame('local', s.config, s.actions);
     });
 
-    $('rules-btn').addEventListener('click', function () { openDialog('rules-dialog'); });
+    // 联机入口
+    $('nick').addEventListener('input', function (e) { prefs.nick = Online.cleanName(e.target.value); savePrefs(); });
+    $('create-room').addEventListener('click', createOnlineRoom);
+    function doJoin() {
+      var code = Online.normalizeCode($('join-code').value);
+      if (!code) { showOnlineError('房间号是 5 位字母或数字'); return; }
+      setOnlineBusy(true);
+      joinRoom(code).then(function () { setOnlineBusy(false); });
+    }
+    $('join-room').addEventListener('click', doJoin);
+    $('join-code').addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoin(); });
+    $('rejoin-room').addEventListener('click', function () {
+      var last = load(STORE_ONLINE);
+      if (!last || !last.code) return;
+      setOnlineBusy(true);
+      joinRoom(last.code, { autoClaim: false }).then(function () { setOnlineBusy(false); });
+    });
+
+    // 房间
+    $('lobby-leave').addEventListener('click', leaveRoom);
+    $('copy-code').addEventListener('click', function () {
+      if (!online) return;
+      var btn = $('copy-code');
+      function done(ok) {
+        btn.textContent = ok ? '已复制' : '请手动复制';
+        setTimeout(function () { btn.textContent = '复制'; }, 1600);
+        if (!ok) {
+          var range = document.createRange();
+          range.selectNodeContents($('lobby-code'));
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+      try {
+        navigator.clipboard.writeText(online.code).then(function () { done(true); }, function () { done(false); });
+      } catch (e) { done(false); }
+    });
+    $('lobby-mode').addEventListener('change', function (e) {
+      if (e.target.name === 'lobby-mode') sendOp({ type: 'mode', mode: e.target.value }).catch(renderLobby);
+    });
+    $('lobby-seats').addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b) return;
+      $('lobby-error').hidden = true;
+      if (b.dataset.claim) sendOp({ type: 'claim', seat: +b.dataset.claim, name: nickName() }).catch(function () {});
+      if (b.dataset.release) sendOp({ type: 'release', seat: +b.dataset.release }).catch(function () {});
+    });
+    $('lobby-seats').addEventListener('change', function (e) {
+      var t = e.target;
+      $('lobby-error').hidden = true;
+      if (t.dataset.kind) sendOp({ type: 'seat', seat: +t.dataset.kind, kind: t.value }).catch(renderLobby);
+      if (t.dataset.level) sendOp({ type: 'seat', seat: +t.dataset.level, level: t.value }).catch(renderLobby);
+    });
+    $('lobby-speed').addEventListener('change', function (e) { sendOp({ type: 'speed', speed: e.target.value }).catch(renderLobby); });
+    $('lobby-nick').addEventListener('change', function (e) {
+      prefs.nick = Online.cleanName(e.target.value);
+      savePrefs();
+      if (online && online.room && online.room.seats.some(function (s) { return s.owner === online.pid; }) && prefs.nick) {
+        sendOp({ type: 'rename', name: prefs.nick }).catch(function () {});
+      }
+    });
+    $('lobby-start').addEventListener('click', function () {
+      unlockAudio();
+      $('lobby-error').hidden = true;
+      sendOp({ type: 'start' }).catch(function () {});
+    });
+
+    // 对局
+    document.querySelectorAll('.rules-open').forEach(function (b) {
+      b.addEventListener('click', function () { openDialog('rules-dialog'); });
+    });
     $('rules-close').addEventListener('click', function () { closeDialog('rules-dialog'); });
 
     $('menu-btn').addEventListener('click', function () {
+      if (isOnlineGame()) { leaveRoom(); return; }
       saveGame();
       showScreen('setup');
+    });
+    $('players').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-takeover]');
+      if (b) sendOp({ type: 'takeover', player: +b.dataset.takeover }).catch(function () {});
     });
     $('hint-btn').addEventListener('click', giveHint);
     $('undo-btn').addEventListener('click', undo);
@@ -1340,11 +2086,16 @@
     $('resign-btn').addEventListener('click', resign);
 
     $('end-again').addEventListener('click', function () {
+      if (isOnlineGame()) {
+        sendOp({ type: 'rematch' }).catch(function () {});
+        return;
+      }
       closeDialog('end-dialog');
-      startGame(game.config);
+      enterGame('local', game.config);
     });
     $('end-menu').addEventListener('click', function () {
       closeDialog('end-dialog');
+      if (isOnlineGame()) { leaveRoom(); return; }
       showScreen('setup');
     });
     $('end-view').addEventListener('click', function () { closeDialog('end-dialog'); });
@@ -1376,6 +2127,7 @@
   bindBoard();
   bindKeys();
   showScreen('setup');
+  ensureNet();
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function () { if (demo.view && demo.view.resize()) demo.view.draw(); });
   }

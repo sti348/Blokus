@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>角斗士棋</title>
-<meta name="description" content="角斗士棋（Blokus）网页版：1–4 人同屏对战，可与三档难度的电脑对弈。">
+<meta name="description" content="角斗士棋（Blokus）网页版：方块与三角块两种棋盘，1–4 人同屏或联机对战，可与三档难度的电脑对弈。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&family=ZCOOL+QingKe+HuangYou&display=swap">
@@ -19,52 +19,135 @@
       <h1 class="logo" aria-label="角斗士棋">
         <span class="logo-ch" style="--c: var(--p-blue)">角</span><span class="logo-ch" style="--c: var(--p-yellow)">斗</span><span class="logo-ch" style="--c: var(--p-red)">士</span><span class="logo-ch" style="--c: var(--p-green)">棋</span>
       </h1>
-      <p class="tagline">Blokus · 21 块棋子，角对角抢地盘</p>
+      <p class="tagline">Blokus · 方块与三角块，角对角抢地盘</p>
       <div class="demo-frame">
         <canvas id="demo-board" aria-label="电脑自动对弈演示"></canvas>
-        <span class="demo-label">电脑演示局</span>
+        <span class="demo-label" id="demo-label">电脑演示局</span>
       </div>
     </div>
 
-    <form id="setup-form" class="setup-panel" autocomplete="off">
+    <div class="setup-panel">
+      <div class="tabs" role="tablist" aria-label="对战方式">
+        <button type="button" role="tab" class="tab" id="tab-local" aria-controls="local-panel" aria-selected="true">本地对战</button>
+        <button type="button" role="tab" class="tab" id="tab-online" aria-controls="online-panel" aria-selected="false">联机对战</button>
+      </div>
+
       <div class="field">
         <span class="field-label">棋盘</span>
         <div class="seg" role="radiogroup" aria-label="棋盘">
-          <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span>标准 20×20 · 2–4 方</span></label>
+          <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span>标准 20×20</span></label>
           <label><input type="radio" name="mode" id="mode-duo" value="duo"><span>双人 14×14</span></label>
+          <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span>三角块 · 六边形</span></label>
+        </div>
+        <p class="field-note" id="mode-note"></p>
+      </div>
+
+      <form id="local-panel" class="panel-body" role="tabpanel" aria-labelledby="tab-local" autocomplete="off">
+        <div class="field">
+          <span class="field-label">快速开局</span>
+          <div class="presets" id="presets"></div>
+        </div>
+
+        <div class="field">
+          <span class="field-label">座位 <small>按行棋顺序</small></span>
+          <ol class="seats" id="seats"></ol>
+        </div>
+
+        <div class="field options">
+          <label class="check"><input type="checkbox" id="opt-hints" checked><span>显示可落子的角点</span></label>
+          <label class="check"><input type="checkbox" id="opt-sound" checked><span>音效</span></label>
+          <label class="inline-select">电脑速度
+            <select id="opt-speed">
+              <option value="fast">快</option>
+              <option value="normal" selected>中</option>
+              <option value="slow">慢</option>
+            </select>
+          </label>
+        </div>
+
+        <p class="form-error" id="setup-error" role="alert" hidden></p>
+
+        <div class="setup-actions">
+          <button type="submit" class="btn primary big" id="start-btn">开始对局</button>
+          <button type="button" class="btn" id="resume-btn" hidden>继续上局</button>
+          <button type="button" class="btn ghost rules-open">玩法规则</button>
+        </div>
+      </form>
+
+      <div id="online-panel" class="panel-body" role="tabpanel" aria-labelledby="tab-online" hidden>
+        <div class="field">
+          <label class="field-label" for="nick">你的昵称</label>
+          <input type="text" id="nick" maxlength="12" placeholder="玩家" autocomplete="nickname">
+        </div>
+        <div class="online-grid">
+          <div class="online-card">
+            <span class="field-label">开一个新房间</span>
+            <p>按上面选的棋盘建房，你来安排座位和电脑。</p>
+            <button type="button" class="btn primary" id="create-room">创建房间</button>
+          </div>
+          <div class="online-card">
+            <label class="field-label" for="join-code">加入朋友的房间</label>
+            <div class="join-row">
+              <input type="text" id="join-code" maxlength="7" placeholder="5 位房间号" autocapitalize="characters" spellcheck="false">
+              <button type="button" class="btn" id="join-room">加入</button>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="btn" id="rejoin-room" hidden></button>
+        <p class="online-note" id="online-note" role="status">正在检查联机功能…</p>
+        <p class="form-error" id="online-error" role="alert" hidden></p>
+        <div class="setup-actions">
+          <button type="button" class="btn ghost rules-open">玩法规则</button>
         </div>
       </div>
+    </div>
+  </section>
 
-      <div class="field">
-        <span class="field-label">快速开局</span>
-        <div class="presets" id="presets"></div>
+  <!-- ============ 联机房间 ============ -->
+  <section id="lobby" class="screen lobby" hidden>
+    <header class="topbar">
+      <button type="button" class="btn ghost" id="lobby-leave">‹ 离开房间</button>
+      <div class="room-code">
+        <span class="field-label">房间号</span>
+        <b id="lobby-code">-----</b>
+        <button type="button" class="btn" id="copy-code">复制</button>
       </div>
-
-      <div class="field">
-        <span class="field-label">座位 <small>按行棋顺序</small></span>
-        <ol class="seats" id="seats"></ol>
+      <span class="conn" id="lobby-conn"></span>
+    </header>
+    <div class="lobby-body">
+      <div class="lobby-panel">
+        <p class="lobby-hint">把房间号发给朋友，在「联机对战」里输入就能加入。人齐后由房主开始。</p>
+        <div class="field">
+          <span class="field-label">棋盘</span>
+          <div class="seg" id="lobby-mode" role="radiogroup" aria-label="棋盘"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">座位 <small>按行棋顺序</small></span>
+          <ol class="seats" id="lobby-seats"></ol>
+        </div>
+        <div class="field options">
+          <label class="inline-select">电脑速度
+            <select id="lobby-speed">
+              <option value="fast">快</option>
+              <option value="normal">中</option>
+              <option value="slow">慢</option>
+            </select>
+          </label>
+          <label class="inline-select">你的昵称
+            <input type="text" id="lobby-nick" maxlength="12" placeholder="玩家">
+          </label>
+        </div>
+        <p class="form-error" id="lobby-error" role="alert" hidden></p>
+        <div class="setup-actions">
+          <button type="button" class="btn primary big" id="lobby-start">开始对局</button>
+          <span class="lobby-wait" id="lobby-wait"></span>
+        </div>
       </div>
-
-      <div class="field options">
-        <label class="check"><input type="checkbox" id="opt-hints" checked><span>显示可落子的角点</span></label>
-        <label class="check"><input type="checkbox" id="opt-sound" checked><span>音效</span></label>
-        <label class="inline-select">电脑速度
-          <select id="opt-speed">
-            <option value="fast">快</option>
-            <option value="normal" selected>中</option>
-            <option value="slow">慢</option>
-          </select>
-        </label>
-      </div>
-
-      <p class="form-error" id="setup-error" role="alert" hidden></p>
-
-      <div class="setup-actions">
-        <button type="submit" class="btn primary big" id="start-btn">开始对局</button>
-        <button type="button" class="btn" id="resume-btn" hidden>继续上局</button>
-        <button type="button" class="btn ghost" id="rules-btn">玩法规则</button>
-      </div>
-    </form>
+      <aside class="lobby-side">
+        <span class="field-label">在线</span>
+        <ul class="people" id="lobby-people"></ul>
+      </aside>
+    </div>
   </section>
 
   <!-- ============ 对局 ============ -->
@@ -76,6 +159,7 @@
         <span class="turn-text" id="turn-text"></span>
         <span class="turn-move" id="turn-move"></span>
       </div>
+      <span class="room-chip" id="room-chip" hidden></span>
       <div class="top-actions">
         <button type="button" class="btn" id="hint-btn" title="提示（H）">提示</button>
         <button type="button" class="btn" id="undo-btn" title="悔棋（Ctrl+Z）">悔棋</button>
@@ -119,10 +203,10 @@
   <dialog id="end-dialog" class="dialog">
     <h2 class="dialog-title" id="end-title">对局结束</h2>
     <table class="results">
-      <thead><tr><th>名次</th><th>玩家</th><th>已放</th><th>剩余</th><th>得分</th></tr></thead>
+      <thead><tr><th>名次</th><th>玩家</th><th class="num">已放</th><th class="num">剩余</th><th class="num">得分</th></tr></thead>
       <tbody id="end-rows"></tbody>
     </table>
-    <p class="dialog-note">计分：每个未放置的格子 −1；21 块全部放完 +15，最后一块是单格再 +5。</p>
+    <p class="dialog-note">计分：每个未放置的格子 −1；全部棋子放完 +15，最后一块是单格再 +5。</p>
     <div class="dialog-actions">
       <button type="button" class="btn ghost" id="end-view">查看棋盘</button>
       <button type="button" class="btn" id="end-menu">返回菜单</button>
@@ -142,17 +226,19 @@
   <dialog id="rules-dialog" class="dialog">
     <h2 class="dialog-title">玩法规则</h2>
     <div class="rules">
-      <p>每位玩家有 21 块颜色相同的棋子（1 到 5 格不等，共 89 格）。按 <b>蓝 → 黄 → 红 → 绿</b> 的顺序轮流放一块。</p>
+      <p>每位玩家有一套同色棋子，按 <b>蓝 → 黄 → 红 → 绿</b> 的顺序轮流放一块。</p>
       <ol>
-        <li><b>第一块</b>必须盖住自己的起始角（棋盘上带颜色圆圈的格子）。</li>
-        <li>之后每一块都要和自己已有的棋子<b>角对角</b>相接。</li>
+        <li><b>第一块</b>必须盖住起点（棋盘上带圆圈的格子）。</li>
+        <li>之后每一块都要和自己已有的棋子<b>角对角</b>（只共享一个顶点）相接。</li>
         <li>自己的棋子之间<b>不能边贴边</b>；和别人的棋子边贴边没关系。</li>
         <li>棋子可以任意旋转、翻转。放下后不能移动。</li>
         <li>某位玩家无处可放时自动出局，其他人继续，直到所有人都放不下为止。</li>
       </ol>
-      <p><b>计分</b>：每个没放上去的格子扣 1 分；21 块全部放完加 15 分，如果最后一块是单格再加 5 分。分高者胜。</p>
-      <p><b>双人 14×14</b>：两位玩家分别从棋盘内侧的两个起点开始，其余规则相同。</p>
-      <p><b>操作</b>：点选右侧棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
+      <p><b>计分</b>：每个没放上去的格子扣 1 分；全部棋子放完加 15 分，如果最后一块是单格再加 5 分。分高者胜。</p>
+      <p><b>标准 20×20</b>：21 块方块棋子（共 89 格），各自从棋盘的一个角出发。<b>双人 14×14</b>：两人从棋盘内侧的两个起点出发。</p>
+      <p><b>三角块</b>：六边形棋盘由三角形格子组成，每人 22 块三角棋子（1–6 格，共 110 格），可旋转 6 个方向。棋盘上有 6 个公共起点，第一块盖住任意一个空着的起点即可；4 人用边长 9 的棋盘，3 人用 8，2 人用 7。</p>
+      <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。</p>
+      <p><b>操作</b>：点选托盘里的棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
     </div>
     <div class="dialog-actions">
       <button type="button" class="btn primary" id="rules-close">知道了</button>
@@ -163,6 +249,8 @@
 <script src="js/pieces.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/ai.js"></script>
+<script src="js/online.js"></script>
+<script src="js/net.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

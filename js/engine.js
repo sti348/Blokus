@@ -1,6 +1,6 @@
 /*
- * 角斗士棋（Blokus）规则引擎：棋盘状态、落子合法性、走法生成、轮转与计分。
- * 不依赖 DOM，可在浏览器和 Node 中运行。
+ * 角斗士棋（Blokus）规则引擎：棋盘拓扑、落子合法性、走法生成、轮转与计分。
+ * 同时支持方格棋盘与三角格（六边形）棋盘。不依赖 DOM，可在浏览器和 Node 中运行。
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./pieces.js'));
@@ -8,14 +8,22 @@
 })(typeof self !== 'undefined' ? self : this, function (Pieces) {
   'use strict';
 
-  var PIECES = Pieces.PIECES;
-  var PIECE_COUNT = Pieces.PIECE_COUNT;
-  var TOTAL_SQUARES = Pieces.TOTAL_SQUARES;
+  var SETS = Pieces.SETS;
   var EMPTY = -1;
+  var BLOCKED = -2;
+
+  var FOUR = [
+    { color: 'blue', label: '蓝' },
+    { color: 'yellow', label: '黄' },
+    { color: 'red', label: '红' },
+    { color: 'green', label: '绿' }
+  ];
 
   var MODES = {
     // 标准盘：四个角按顺时针分配，固定按 蓝 → 黄 → 红 → 绿 行棋
     classic: {
+      name: '标准',
+      shape: 'square',
       size: 20,
       seats: [
         { color: 'blue', label: '蓝', start: [0, 0] },
@@ -26,33 +34,228 @@
     },
     // 双人盘：14×14，起点在棋盘内侧
     duo: {
+      name: '双人',
+      shape: 'square',
       size: 14,
       seats: [
         { color: 'violet', label: '紫', start: [4, 4] },
         { color: 'orange', label: '橙', start: [9, 9] }
       ]
+    },
+    // 三角块：六边形棋盘，6 个公共起点；人数越少棋盘越小
+    trigon: {
+      name: '三角块',
+      shape: 'tri',
+      sizeFor: { 2: 7, 3: 8, 4: 9 },
+      seats: FOUR
     }
   };
 
+  function isMode(m) { return typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODES, m); }
+
+  /* ================= 棋盘拓扑 ================= */
+
   /**
-   * config: { size, players: [{ start: [x, y], ...任意附加信息 }] }
+   * cellPoly(x, y) 返回格子的顶点（整数顶点坐标），不在棋盘内返回 null。
+   * 共享两个顶点 = 边相邻，只共享一个顶点 = 角相邻。
+   */
+  function buildTopology(kind, cols, rows, unitX, unitY, cellPoly) {
+    var n = cols * rows;
+    var valid = new Uint8Array(n);
+    var polys = new Array(n);
+    var vmap = {};
+    var i, x, y;
+    for (y = 0; y < rows; y++) {
+      for (x = 0; x < cols; x++) {
+        i = y * cols + x;
+        var poly = cellPoly(x, y);
+        if (!poly) continue;
+        valid[i] = 1;
+        polys[i] = poly;
+        poly.forEach(function (v) {
+          var k = v[0] + ',' + v[1];
+          (vmap[k] || (vmap[k] = [])).push(i);
+        });
+      }
+    }
+    var edges = new Array(n), corners = new Array(n), across = new Array(n);
+    var cells = [];
+    var minVX = Infinity, minVY = Infinity, maxVX = -Infinity, maxVY = -Infinity;
+    for (i = 0; i < n; i++) {
+      if (!valid[i]) continue;
+      cells.push(i);
+      var shared = {};
+      polys[i].forEach(function (v) {
+        if (v[0] < minVX) minVX = v[0];
+        if (v[0] > maxVX) maxVX = v[0];
+        if (v[1] < minVY) minVY = v[1];
+        if (v[1] > maxVY) maxVY = v[1];
+        vmap[v[0] + ',' + v[1]].forEach(function (j) { if (j !== i) shared[j] = (shared[j] || 0) + 1; });
+      });
+      edges[i] = [];
+      corners[i] = [];
+      Object.keys(shared).forEach(function (j) {
+        (shared[j] >= 2 ? edges[i] : corners[i]).push(+j);
+      });
+      edges[i].sort(function (a, b) { return a - b; });
+      corners[i].sort(function (a, b) { return a - b; });
+      // 每条边对面的格子（画轮廓用）
+      var p = polys[i];
+      across[i] = p.map(function (v, k) {
+        var w = p[(k + 1) % p.length];
+        var a = vmap[v[0] + ',' + v[1]], b = vmap[w[0] + ',' + w[1]];
+        for (var t = 0; t < a.length; t++) if (a[t] !== i && b.indexOf(a[t]) >= 0) return a[t];
+        return -1;
+      });
+    }
+    var cx = 0, cy = 0;
+    var centroids = new Float64Array(n * 2);
+    cells.forEach(function (c) {
+      var sx = 0, sy = 0;
+      polys[c].forEach(function (v) { sx += v[0]; sy += v[1]; });
+      centroids[c * 2] = sx / polys[c].length * unitX;
+      centroids[c * 2 + 1] = sy / polys[c].length * unitY;
+      cx += centroids[c * 2];
+      cy += centroids[c * 2 + 1];
+    });
+    cx /= cells.length;
+    cy /= cells.length;
+    var centerDist = new Float64Array(n);
+    cells.forEach(function (c) {
+      var dx = centroids[c * 2] - cx, dy = centroids[c * 2 + 1] - cy;
+      // 方格用曼哈顿距离，三角格用放大的欧氏距离，两者量级相近
+      centerDist[c] = kind === 'square' ? Math.abs(dx) + Math.abs(dy) : Math.sqrt(dx * dx + dy * dy) * 1.6;
+    });
+    return {
+      kind: kind,
+      parity: kind === 'tri',
+      cols: cols,
+      rows: rows,
+      n: n,
+      valid: valid,
+      cells: cells,
+      polys: polys,
+      edges: edges,
+      corners: corners,
+      across: across,
+      centroids: centroids,
+      centerDist: centerDist,
+      center: [cx, cy],
+      unitX: unitX,
+      unitY: unitY,
+      bounds: { minVX: minVX, minVY: minVY, maxVX: maxVX, maxVY: maxVY }
+    };
+  }
+
+  function squareTopology(size) {
+    var t = buildTopology('square', size, size, 1, 1, function (x, y) {
+      return [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]];
+    });
+    t.size = size;
+    t.outline = [[0, 0], [size, 0], [size, size], [0, size]];
+    return t;
+  }
+
+  // 平顶六边形，边长 side 个三角
+  function triTopology(side) {
+    var cx = 2 * side + (side % 2 === 0 ? 1 : 0); // 中心顶点 (cx, side)，cx + side 须为奇数
+    var cols = cx + 2 * side + 1, rows = 2 * side;
+    function inside(v) {
+      var dy = Math.abs(v[1] - side);
+      return dy <= side && Math.abs(v[0] - cx) + dy <= 2 * side;
+    }
+    var t = buildTopology('tri', cols, rows, 0.5, Pieces.H, function (x, y) {
+      var vs = Pieces.triVerts(x, y);
+      return vs.every(inside) ? vs : null;
+    });
+    t.size = side;
+    t.outline = [[cx - side, 0], [cx + side, 0], [cx + 2 * side, side], [cx + side, 2 * side], [cx - side, 2 * side], [cx - 2 * side, side]];
+    // 6 个起点：中心到 6 个角的中点附近
+    var starts = [];
+    for (var k = 0; k < 6; k++) {
+      var ang = k * Math.PI / 3;
+      var px = t.center[0] + Math.cos(ang) * side * 0.5;
+      var py = t.center[1] + Math.sin(ang) * side * 0.5;
+      var best = -1, bd = Infinity;
+      t.cells.forEach(function (c) {
+        var dx = t.centroids[c * 2] - px, dy = t.centroids[c * 2 + 1] - py;
+        var d = dx * dx + dy * dy;
+        if (d < bd - 1e-9) { bd = d; best = c; }
+      });
+      starts.push([best % cols, (best - best % cols) / cols]);
+    }
+    t.starts = starts;
+    return t;
+  }
+
+  var topoCache = {};
+  function topologyFor(mode, size) {
+    var shape = (isMode(mode) ? MODES[mode] : MODES.classic).shape;
+    var key = shape + ':' + size;
+    if (!topoCache[key]) topoCache[key] = shape === 'tri' ? triTopology(size) : squareTopology(size);
+    return topoCache[key];
+  }
+
+  function setFor(mode) { return SETS[(isMode(mode) ? MODES[mode] : MODES.classic).shape]; }
+
+  function sizeFor(mode, playerCount) {
+    var m = MODES[mode];
+    if (m.sizeFor) return m.sizeFor[Math.max(2, Math.min(4, playerCount))];
+    return m.size;
+  }
+
+  /**
+   * 按座位生成对局配置。
+   * entries: [{ seat, ...附加信息（name / type / level / owner 等）}]，按座位顺序。
+   */
+  function buildConfig(mode, entries) {
+    var m = MODES[mode];
+    var size = sizeFor(mode, entries.length);
+    var topo = topologyFor(mode, size);
+    return {
+      mode: mode,
+      size: size,
+      players: entries.map(function (e) {
+        var seat = m.seats[e.seat];
+        var p = {};
+        for (var k in e) if (Object.prototype.hasOwnProperty.call(e, k)) p[k] = e[k];
+        p.color = seat.color;
+        p.label = seat.label;
+        p.starts = seat.start ? [seat.start.slice()] : topo.starts.map(function (s) { return s.slice(); });
+        return p;
+      })
+    };
+  }
+
+  /* ================= 对局状态 ================= */
+
+  /**
+   * config: { mode, size, players: [{ starts: [[x, y], ...] | start: [x, y], ...附加信息 }] }
    * 玩家数组顺序即行棋顺序。
    */
   function createGame(config) {
-    var size = config.size;
-    var board = new Int8Array(size * size);
-    board.fill(EMPTY);
+    var mode = isMode(config.mode) ? config.mode : 'classic';
+    var topo = topologyFor(mode, config.size);
+    var set = setFor(mode);
+    var board = new Int8Array(topo.n);
+    for (var i = 0; i < topo.n; i++) board[i] = topo.valid[i] ? EMPTY : BLOCKED;
     var state = {
-      size: size,
+      mode: mode,
+      size: config.size,
+      topo: topo,
+      set: set,
       board: board,
-      players: config.players.map(function (p, i) {
+      players: config.players.map(function (p, idx) {
         var pl = {};
         for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k)) pl[k] = p[k];
-        pl.index = i;
-        pl.start = [p.start[0], p.start[1]];
+        var starts = p.starts || [p.start];
+        pl.index = idx;
+        pl.starts = starts.map(function (s) { return [s[0], s[1]]; });
+        pl.startIdx = starts.map(function (s) { return s[1] * topo.cols + s[0]; })
+          .filter(function (s) { return s >= 0 && s < topo.n && topo.valid[s]; });
         pl.remaining = [];
-        for (var j = 0; j < PIECE_COUNT; j++) pl.remaining.push(true);
-        pl.remainingSquares = TOTAL_SQUARES;
+        for (var j = 0; j < set.count; j++) pl.remaining.push(true);
+        pl.remainingSquares = set.total;
         pl.placed = 0;
         pl.lastPiece = -1;
         pl.done = false;
@@ -69,27 +272,29 @@
     return state;
   }
 
-  function placementCells(pieceIndex, orient, x, y) {
-    var flat = PIECES[pieceIndex].orients[orient].flat;
+  function placementCells(state, pieceIndex, orient, x, y) {
+    var flat = state.set.pieces[pieceIndex].orients[orient].flat;
     var out = [];
     for (var k = 0; k < flat.length; k += 2) out.push([x + flat[k], y + flat[k + 1]]);
     return out;
   }
 
-  // 1 表示玩家 p 不能占用：已有棋子，或与 p 的棋子边相邻
-  function forbiddenMask(board, size, p) {
-    var n = size * size;
+  function placementIndices(state, pieceIndex, orient, x, y) {
+    var cols = state.topo.cols;
+    return placementCells(state, pieceIndex, orient, x, y).map(function (c) { return c[1] * cols + c[0]; });
+  }
+
+  // 1 表示玩家 p 不能占用：已有棋子 / 棋盘外，或与 p 的棋子边相邻
+  function forbiddenMask(board, topo, p) {
+    var n = topo.n;
     var forb = new Uint8Array(n);
     for (var i = 0; i < n; i++) {
       var v = board[i];
       if (v !== EMPTY) {
         forb[i] = 1;
         if (v === p) {
-          var x = i % size;
-          if (x > 0) forb[i - 1] = 1;
-          if (x < size - 1) forb[i + 1] = 1;
-          if (i >= size) forb[i - size] = 1;
-          if (i < n - size) forb[i + size] = 1;
+          var e = topo.edges[i];
+          for (var k = 0; k < e.length; k++) forb[e[k]] = 1;
         }
       }
     }
@@ -97,29 +302,30 @@
   }
 
   // 角点：玩家 p 下一块棋子必须覆盖其中之一
-  function anchorMask(board, size, p, player, forb) {
-    var n = size * size;
+  function anchorMask(board, topo, p, player, forb) {
+    var n = topo.n;
     var mark = new Uint8Array(n);
     var list = [];
+    var i;
     if (player.placed === 0) {
-      var s = player.start[1] * size + player.start[0];
-      if (board[s] === EMPTY) {
-        mark[s] = 1;
-        list.push(s);
+      for (i = 0; i < player.startIdx.length; i++) {
+        var s = player.startIdx[i];
+        if (board[s] === EMPTY && !mark[s]) {
+          mark[s] = 1;
+          list.push(s);
+        }
       }
       return { mark: mark, list: list };
     }
-    for (var i = 0; i < n; i++) {
+    for (i = 0; i < n; i++) {
       if (forb[i]) continue;
-      var x = i % size, y = (i - x) / size;
-      var ok = false;
-      if (x > 0 && y > 0 && board[i - size - 1] === p) ok = true;
-      else if (x < size - 1 && y > 0 && board[i - size + 1] === p) ok = true;
-      else if (x > 0 && y < size - 1 && board[i + size - 1] === p) ok = true;
-      else if (x < size - 1 && y < size - 1 && board[i + size + 1] === p) ok = true;
-      if (ok) {
-        mark[i] = 1;
-        list.push(i);
+      var c = topo.corners[i];
+      for (var k = 0; k < c.length; k++) {
+        if (board[c[k]] === p) {
+          mark[i] = 1;
+          list.push(i);
+          break;
+        }
       }
     }
     return { mark: mark, list: list };
@@ -131,29 +337,33 @@
    * pieceFilter 可限定只考虑某些棋子（布尔数组）。
    */
   function forEachMove(state, p, visit, pieceFilter) {
-    var board = state.board, size = state.size;
+    var board = state.board, topo = state.topo;
+    var cols = topo.cols, rows = topo.rows, parity = topo.parity;
     var player = state.players[p];
-    var forb = forbiddenMask(board, size, p);
-    var anchors = anchorMask(board, size, p, player, forb);
+    var forb = forbiddenMask(board, topo, p);
+    var anchors = anchorMask(board, topo, p, player, forb);
     var mark = anchors.mark, list = anchors.list;
     if (!list.length) return;
     var remaining = pieceFilter || player.remaining;
-    for (var pi = 0; pi < PIECE_COUNT; pi++) {
+    var pieces = state.set.pieces;
+    for (var pi = 0; pi < pieces.length; pi++) {
       if (!remaining[pi] || !player.remaining[pi]) continue;
-      var orients = PIECES[pi].orients;
+      var orients = pieces[pi].orients;
       for (var oi = 0; oi < orients.length; oi++) {
         var flat = orients[oi].flat;
         var len = flat.length;
         for (var a = 0; a < list.length; a++) {
           var ai = list[a];
-          var ax = ai % size, ay = (ai - ax) / size;
+          var ax = ai % cols, ay = (ai - ax) / cols;
           for (var c = 0; c < len; c += 2) {
             var ox = ax - flat[c], oy = ay - flat[c + 1];
+            // 三角格：平移必须保持尖的朝向
+            if (parity && ((ox + oy) & 1)) continue;
             var ok = true;
             for (var k = 0; k < len; k += 2) {
               var x = ox + flat[k], y = oy + flat[k + 1];
-              if (x < 0 || y < 0 || x >= size || y >= size) { ok = false; break; }
-              var idx = y * size + x;
+              if (x < 0 || y < 0 || x >= cols || y >= rows) { ok = false; break; }
+              var idx = y * cols + x;
               if (forb[idx]) { ok = false; break; }
               // 去重：若更靠前的格子也在角点上，这个落子会在那里被枚举
               if (k < c && mark[idx]) { ok = false; break; }
@@ -181,7 +391,7 @@
 
   // 每块剩余棋子当前可落子的数量
   function movesPerPiece(state, p) {
-    var counts = new Array(PIECE_COUNT).fill(0);
+    var counts = new Array(state.set.count).fill(0);
     forEachMove(state, p, function (piece) { counts[piece]++; });
     return counts;
   }
@@ -192,33 +402,34 @@
    */
   function checkPlacement(state, p, pieceIndex, orient, x, y) {
     var player = state.players[p];
-    if (!player || player.done || !player.remaining[pieceIndex]) return 'used';
-    var board = state.board, size = state.size;
-    var cells = placementCells(pieceIndex, orient, x, y);
-    var i, cx, cy;
+    if (!Number.isInteger(pieceIndex) || !Number.isInteger(orient)) return 'used';
+    var piece = state.set.pieces[pieceIndex];
+    if (!player || player.done || !piece || !player.remaining[pieceIndex] || !piece.orients[orient]) return 'used';
+    if (x !== Math.floor(x) || y !== Math.floor(y)) return 'bounds';
+    var topo = state.topo, board = state.board;
+    if (topo.parity && ((x + y) & 1)) return 'bounds';
+    var cells = placementCells(state, pieceIndex, orient, x, y);
+    var idx = [];
+    var i, k;
     for (i = 0; i < cells.length; i++) {
-      cx = cells[i][0]; cy = cells[i][1];
-      if (cx < 0 || cy < 0 || cx >= size || cy >= size) return 'bounds';
+      var cx = cells[i][0], cy = cells[i][1];
+      if (cx < 0 || cy < 0 || cx >= topo.cols || cy >= topo.rows) return 'bounds';
+      var j = cy * topo.cols + cx;
+      if (!topo.valid[j]) return 'bounds';
+      idx.push(j);
     }
-    for (i = 0; i < cells.length; i++) {
-      if (board[cells[i][1] * size + cells[i][0]] !== EMPTY) return 'occupied';
-    }
-    var at = function (xx, yy) {
-      return xx >= 0 && yy >= 0 && xx < size && yy < size ? board[yy * size + xx] : EMPTY;
-    };
-    for (i = 0; i < cells.length; i++) {
-      cx = cells[i][0]; cy = cells[i][1];
-      if (at(cx - 1, cy) === p || at(cx + 1, cy) === p || at(cx, cy - 1) === p || at(cx, cy + 1) === p) return 'edge';
+    for (i = 0; i < idx.length; i++) if (board[idx[i]] !== EMPTY) return 'occupied';
+    for (i = 0; i < idx.length; i++) {
+      var e = topo.edges[idx[i]];
+      for (k = 0; k < e.length; k++) if (board[e[k]] === p) return 'edge';
     }
     if (player.placed === 0) {
-      for (i = 0; i < cells.length; i++) {
-        if (cells[i][0] === player.start[0] && cells[i][1] === player.start[1]) return null;
-      }
+      for (i = 0; i < idx.length; i++) if (player.startIdx.indexOf(idx[i]) >= 0) return null;
       return 'start';
     }
-    for (i = 0; i < cells.length; i++) {
-      cx = cells[i][0]; cy = cells[i][1];
-      if (at(cx - 1, cy - 1) === p || at(cx + 1, cy - 1) === p || at(cx - 1, cy + 1) === p || at(cx + 1, cy + 1) === p) return null;
+    for (i = 0; i < idx.length; i++) {
+      var c = topo.corners[idx[i]];
+      for (k = 0; k < c.length; k++) if (board[c[k]] === p) return null;
     }
     return 'corner';
   }
@@ -256,6 +467,7 @@
    */
   function applyAction(state, action) {
     if (state.over) return 'over';
+    if (!action || (action.type !== 'place' && action.type !== 'resign')) return 'invalid';
     var p = state.current;
     var player = state.players[p];
     if (action.type === 'resign') {
@@ -268,25 +480,24 @@
     }
     var reason = checkPlacement(state, p, action.piece, action.orient, action.x, action.y);
     if (reason) return reason;
-    var cells = placementCells(action.piece, action.orient, action.x, action.y);
-    for (var i = 0; i < cells.length; i++) state.board[cells[i][1] * state.size + cells[i][0]] = p;
+    var cells = placementCells(state, action.piece, action.orient, action.x, action.y);
+    for (var i = 0; i < cells.length; i++) state.board[cells[i][1] * state.topo.cols + cells[i][0]] = p;
     player.remaining[action.piece] = false;
-    player.remainingSquares -= PIECES[action.piece].size;
+    player.remainingSquares -= state.set.pieces[action.piece].size;
     player.placed++;
     player.lastPiece = action.piece;
-    var record = { type: 'place', player: p, piece: action.piece, orient: action.orient, x: action.x, y: action.y };
-    state.actions.push(record);
+    state.actions.push({ type: 'place', player: p, piece: action.piece, orient: action.orient, x: action.x, y: action.y });
     state.lastMove = { player: p, piece: action.piece, cells: cells };
     advance(state);
     return null;
   }
 
-  // 从头重放动作序列（用于悔棋、读档）
+  // 从头重放动作序列（用于悔棋、读档、联机同步）；遇到非法动作即停止
   function replay(config, actions) {
     var state = createGame(config);
     for (var i = 0; i < actions.length; i++) {
       var a = actions[i];
-      if (state.over || a.player !== state.current) break;
+      if (state.over || !a || a.player !== state.current) break;
       if (applyAction(state, a)) break;
     }
     return state;
@@ -303,12 +514,13 @@
   }
 
   function standings(state) {
+    var total = state.set.total;
     var rows = state.players.map(function (pl) {
       return {
         index: pl.index,
         player: pl,
         score: scoreOf(pl),
-        placedSquares: TOTAL_SQUARES - pl.remainingSquares,
+        placedSquares: total - pl.remainingSquares,
         remainingSquares: pl.remainingSquares,
         piecesLeft: pl.remaining.filter(Boolean).length,
         allPlaced: pl.remainingSquares === 0,
@@ -326,11 +538,19 @@
 
   return {
     EMPTY: EMPTY,
+    BLOCKED: BLOCKED,
     MODES: MODES,
-    PIECES: PIECES,
-    TOTAL_SQUARES: TOTAL_SQUARES,
+    SETS: SETS,
+    isMode: isMode,
+    PIECES: SETS.square.pieces,
+    TOTAL_SQUARES: SETS.square.total,
+    topologyFor: topologyFor,
+    setFor: setFor,
+    sizeFor: sizeFor,
+    buildConfig: buildConfig,
     createGame: createGame,
     placementCells: placementCells,
+    placementIndices: placementIndices,
     forbiddenMask: forbiddenMask,
     anchorMask: anchorMask,
     forEachMove: forEachMove,

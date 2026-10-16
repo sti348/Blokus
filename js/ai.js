@@ -1,5 +1,5 @@
 /*
- * 角斗士棋电脑玩家。
+ * 角斗士棋电脑玩家（方格、三角格通用）。
  *   easy   —— 随机落子，偏好大块棋子
  *   normal —— 贪心：棋子大小、新增角点、封堵对手角点、向中心扩张
  *   hard   —— 先用贪心筛选候选，再比较落子后双方的可行步数（机动性）
@@ -10,7 +10,6 @@
 })(typeof self !== 'undefined' ? self : this, function (Engine) {
   'use strict';
 
-  var PIECES = Engine.PIECES;
   var EMPTY = Engine.EMPTY;
 
   var LEVELS = {
@@ -19,64 +18,78 @@
     hard: { label: '困难' }
   };
 
-  function isAnchorAfter(board, size, p, x, y) {
-    var i = y * size + x;
+  function isAnchorAfter(board, topo, p, i) {
     if (board[i] !== EMPTY) return false;
-    if (x > 0 && board[i - 1] === p) return false;
-    if (x < size - 1 && board[i + 1] === p) return false;
-    if (y > 0 && board[i - size] === p) return false;
-    if (y < size - 1 && board[i + size] === p) return false;
-    return (x > 0 && y > 0 && board[i - size - 1] === p) ||
-      (x < size - 1 && y > 0 && board[i - size + 1] === p) ||
-      (x > 0 && y < size - 1 && board[i + size - 1] === p) ||
-      (x < size - 1 && y < size - 1 && board[i + size + 1] === p);
+    var e = topo.edges[i], k;
+    for (k = 0; k < e.length; k++) if (board[e[k]] === p) return false;
+    var c = topo.corners[i];
+    for (k = 0; k < c.length; k++) if (board[c[k]] === p) return true;
+    return false;
   }
 
   // 对局进度：0 = 开局，1 = 终局
   function phaseOf(state, p) {
-    return Math.min(1, state.players[p].placed / 12);
+    return Math.min(1, state.players[p].placed / (state.set.count * 0.57));
   }
 
   function makeContext(state, p) {
-    var size = state.size;
-    var forb = Engine.forbiddenMask(state.board, size, p);
-    var own = Engine.anchorMask(state.board, size, p, state.players[p], forb);
-    var opp = new Uint8Array(size * size);
+    var topo = state.topo;
+    var forb = Engine.forbiddenMask(state.board, topo, p);
+    var own = Engine.anchorMask(state.board, topo, p, state.players[p], forb);
+    var opp = new Uint8Array(topo.n);
     state.players.forEach(function (pl, o) {
       if (o === p || pl.done) return;
-      var f = Engine.forbiddenMask(state.board, size, o);
-      var a = Engine.anchorMask(state.board, size, o, pl, f);
+      var f = Engine.forbiddenMask(state.board, topo, o);
+      var a = Engine.anchorMask(state.board, topo, o, pl, f);
       for (var i = 0; i < a.list.length; i++) opp[a.list[i]]++;
     });
-    return { own: own.mark, opp: opp, phase: phaseOf(state, p), center: (size - 1) / 2 };
+    return {
+      own: own.mark,
+      opp: opp,
+      phase: phaseOf(state, p),
+      seen: new Uint32Array(topo.n),
+      stamp: 0
+    };
   }
 
-  // 快速估值：只看棋子附近的局部变化
+  function moveIndices(state, move) {
+    var cols = state.topo.cols;
+    var flat = state.set.pieces[move.piece].orients[move.orient].flat;
+    var out = [];
+    for (var k = 0; k < flat.length; k += 2) out.push((move.y + flat[k + 1]) * cols + move.x + flat[k]);
+    return out;
+  }
+
+  // 快速估值：只看棋子附近（边相邻 + 角相邻）的局部变化
   function quickScore(state, p, move, ctx, w) {
-    var board = state.board, size = state.size;
-    var flat = PIECES[move.piece].orients[move.orient].flat;
-    var n = flat.length / 2;
-    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    var k, x, y;
+    var board = state.board, topo = state.topo;
+    var cells = moveIndices(state, move);
+    var n = cells.length;
     var blocked = 0, centerDist = Infinity;
-    for (k = 0; k < flat.length; k += 2) {
-      x = move.x + flat[k]; y = move.y + flat[k + 1];
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-      blocked += ctx.opp[y * size + x];
-      var d = Math.abs(x - ctx.center) + Math.abs(y - ctx.center);
-      if (d < centerDist) centerDist = d;
+    var region = [];
+    var stamp = ++ctx.stamp;
+    function add(j) {
+      if (ctx.seen[j] !== stamp) {
+        ctx.seen[j] = stamp;
+        region.push(j);
+      }
     }
-    minX = Math.max(0, minX - 1); minY = Math.max(0, minY - 1);
-    maxX = Math.min(size - 1, maxX + 1); maxY = Math.min(size - 1, maxY + 1);
+    var i, k;
+    for (i = 0; i < n; i++) {
+      var c = cells[i];
+      blocked += ctx.opp[c];
+      if (topo.centerDist[c] < centerDist) centerDist = topo.centerDist[c];
+      add(c);
+      var e = topo.edges[c], co = topo.corners[c];
+      for (k = 0; k < e.length; k++) add(e[k]);
+      for (k = 0; k < co.length; k++) add(co[k]);
+    }
     var before = 0;
-    for (y = minY; y <= maxY; y++) for (x = minX; x <= maxX; x++) before += ctx.own[y * size + x];
-    for (k = 0; k < flat.length; k += 2) board[(move.y + flat[k + 1]) * size + move.x + flat[k]] = p;
+    for (i = 0; i < region.length; i++) before += ctx.own[region[i]];
+    for (i = 0; i < n; i++) board[cells[i]] = p;
     var after = 0;
-    for (y = minY; y <= maxY; y++) for (x = minX; x <= maxX; x++) if (isAnchorAfter(board, size, p, x, y)) after++;
-    for (k = 0; k < flat.length; k += 2) board[(move.y + flat[k + 1]) * size + move.x + flat[k]] = EMPTY;
+    for (i = 0; i < region.length; i++) if (isAnchorAfter(board, topo, p, region[i])) after++;
+    for (i = 0; i < n; i++) board[cells[i]] = EMPTY;
 
     var early = 1 - ctx.phase;
     return w.size * n * (1 + early) +
@@ -87,22 +100,23 @@
 
   // 对某玩家统计：可行步数，以及“仍有位置可放”的棋子格数
   function mobility(state, o) {
+    var pieces = state.set.pieces;
     var count = 0;
-    var placeable = new Uint8Array(PIECES.length);
+    var placeable = new Uint8Array(pieces.length);
     Engine.forEachMove(state, o, function (piece) {
       count++;
       placeable[piece] = 1;
     });
     var squares = 0;
-    for (var i = 0; i < placeable.length; i++) if (placeable[i]) squares += PIECES[i].size;
+    for (var i = 0; i < placeable.length; i++) if (placeable[i]) squares += pieces[i].size;
     return { count: count, squares: squares };
   }
 
   function withMove(state, p, move, fn) {
-    var board = state.board, size = state.size, pl = state.players[p];
-    var flat = PIECES[move.piece].orients[move.orient].flat;
+    var board = state.board, pl = state.players[p];
+    var cells = moveIndices(state, move);
     var k;
-    for (k = 0; k < flat.length; k += 2) board[(move.y + flat[k + 1]) * size + move.x + flat[k]] = p;
+    for (k = 0; k < cells.length; k++) board[cells[k]] = p;
     pl.remaining[move.piece] = false;
     pl.placed++;
     try {
@@ -110,12 +124,12 @@
     } finally {
       pl.placed--;
       pl.remaining[move.piece] = true;
-      for (k = 0; k < flat.length; k += 2) board[(move.y + flat[k + 1]) * size + move.x + flat[k]] = EMPTY;
+      for (k = 0; k < cells.length; k++) board[cells[k]] = EMPTY;
     }
   }
 
   function deepScore(state, p, move, w) {
-    var size = PIECES[move.piece].size;
+    var size = state.set.pieces[move.piece].size;
     return withMove(state, p, move, function () {
       var mine = mobility(state, p);
       var oppCount = 0, oppSquares = 0, opponents = 0;
@@ -151,7 +165,8 @@
   }
 
   function chooseEasy(state, p, moves, rng) {
-    var weights = moves.map(function (m) { return Math.pow(PIECES[m.piece].size, 2); });
+    var pieces = state.set.pieces;
+    var weights = moves.map(function (m) { return Math.pow(pieces[m.piece].size, 2); });
     return pickWeighted(moves, weights, rng);
   }
 
@@ -171,7 +186,7 @@
       return { move: m, quick: quickScore(state, p, m, ctx, HARD_QUICK_W) };
     });
     scored.sort(function (a, b) { return b.quick - a.quick; });
-    var limit = (opts && opts.candidates) || 28;
+    var limit = (opts && opts.candidates) || (state.topo.kind === 'tri' ? 20 : 28);
     var top = scored.slice(0, limit);
     var best = null, bestScore = -Infinity;
     for (var i = 0; i < top.length; i++) {
