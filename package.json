@@ -1,0 +1,10 @@
+{
+  "name": "blokus",
+  "version": "1.0.0",
+  "description": "角斗士棋（Blokus）网页版：1–4 人同屏对战，可与电脑对弈",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  }
+}

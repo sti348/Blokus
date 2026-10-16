@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>角斗士棋</title>
+<meta name="description" content="角斗士棋（Blokus）网页版：1–4 人同屏对战，可与三档难度的电脑对弈。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&family=ZCOOL+QingKe+HuangYou&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 开局设置 ============ -->
+  <section id="setup" class="screen setup">
+    <div class="setup-hero">
+      <h1 class="logo" aria-label="角斗士棋">
+        <span class="logo-ch" style="--c: var(--p-blue)">角</span><span class="logo-ch" style="--c: var(--p-yellow)">斗</span><span class="logo-ch" style="--c: var(--p-red)">士</span><span class="logo-ch" style="--c: var(--p-green)">棋</span>
+      </h1>
+      <p class="tagline">Blokus · 21 块棋子，角对角抢地盘</p>
+      <div class="demo-frame">
+        <canvas id="demo-board" aria-label="电脑自动对弈演示"></canvas>
+        <span class="demo-label">电脑演示局</span>
+      </div>
+    </div>
+
+    <form id="setup-form" class="setup-panel" autocomplete="off">
+      <div class="field">
+        <span class="field-label">棋盘</span>
+        <div class="seg" role="radiogroup" aria-label="棋盘">
+          <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span>标准 20×20 · 2–4 方</span></label>
+          <label><input type="radio" name="mode" id="mode-duo" value="duo"><span>双人 14×14</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">快速开局</span>
+        <div class="presets" id="presets"></div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">座位 <small>按行棋顺序</small></span>
+        <ol class="seats" id="seats"></ol>
+      </div>
+
+      <div class="field options">
+        <label class="check"><input type="checkbox" id="opt-hints" checked><span>显示可落子的角点</span></label>
+        <label class="check"><input type="checkbox" id="opt-sound" checked><span>音效</span></label>
+        <label class="inline-select">电脑速度
+          <select id="opt-speed">
+            <option value="fast">快</option>
+            <option value="normal" selected>中</option>
+            <option value="slow">慢</option>
+          </select>
+        </label>
+      </div>
+
+      <p class="form-error" id="setup-error" role="alert" hidden></p>
+
+      <div class="setup-actions">
+        <button type="submit" class="btn primary big" id="start-btn">开始对局</button>
+        <button type="button" class="btn" id="resume-btn" hidden>继续上局</button>
+        <button type="button" class="btn ghost" id="rules-btn">玩法规则</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ============ 对局 ============ -->
+  <section id="game" class="screen game" hidden>
+    <header class="topbar">
+      <button type="button" class="btn ghost" id="menu-btn" title="返回菜单（对局自动保存）">‹ 菜单</button>
+      <div class="turn" id="turn" aria-live="polite">
+        <span class="turn-dot"></span>
+        <span class="turn-text" id="turn-text"></span>
+        <span class="turn-move" id="turn-move"></span>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="btn" id="hint-btn" title="提示（H）">提示</button>
+        <button type="button" class="btn" id="undo-btn" title="悔棋（Ctrl+Z）">悔棋</button>
+        <button type="button" class="btn" id="pause-btn" hidden>暂停</button>
+        <button type="button" class="btn icon" id="sound-btn" aria-pressed="true" title="音效" aria-label="音效"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6"/><path class="wave" d="M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+      </div>
+    </header>
+
+    <div class="game-layout">
+      <aside class="players" id="players" aria-label="玩家"></aside>
+
+      <div class="board-area">
+        <div class="board-wrap" id="board-wrap">
+          <canvas id="board" tabindex="0" aria-label="棋盘"></canvas>
+          <div class="toast" id="toast" role="status" hidden></div>
+        </div>
+      </div>
+
+      <aside class="dock" id="dock">
+        <div class="dock-head">
+          <span class="dock-title" id="dock-title"></span>
+          <span class="dock-count" id="dock-count"></span>
+        </div>
+        <div class="selected">
+          <div class="sel-preview" id="sel-preview" aria-live="polite"></div>
+          <div class="sel-controls">
+            <button type="button" class="btn icon" id="rot-ccw" title="逆时针旋转（E）" aria-label="逆时针旋转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/></svg></button>
+            <button type="button" class="btn icon" id="rot-cw" title="顺时针旋转（R / 右键 / 滚轮）" aria-label="顺时针旋转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 4.5V9h-4.5"/></svg></button>
+            <button type="button" class="btn icon" id="flip-btn" title="翻转（F）" aria-label="翻转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 2.6"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/></svg></button>
+            <button type="button" class="btn primary" id="place-btn" disabled>放置</button>
+          </div>
+        </div>
+        <div class="tray" id="tray" role="listbox" aria-label="剩余棋子"></div>
+        <p class="keys" id="keys-help">点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消</p>
+        <button type="button" class="btn ghost danger-text" id="resign-btn">停手，不再落子</button>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ 弹窗 ============ -->
+  <dialog id="end-dialog" class="dialog">
+    <h2 class="dialog-title" id="end-title">对局结束</h2>
+    <table class="results">
+      <thead><tr><th>名次</th><th>玩家</th><th>已放</th><th>剩余</th><th>得分</th></tr></thead>
+      <tbody id="end-rows"></tbody>
+    </table>
+    <p class="dialog-note">计分：每个未放置的格子 −1；21 块全部放完 +15，最后一块是单格再 +5。</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="end-view">查看棋盘</button>
+      <button type="button" class="btn" id="end-menu">返回菜单</button>
+      <button type="button" class="btn primary" id="end-again">再来一局</button>
+    </div>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="dialog small">
+    <h2 class="dialog-title" id="confirm-title"></h2>
+    <p id="confirm-text"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="confirm-no">取消</button>
+      <button type="button" class="btn primary" id="confirm-yes">确定</button>
+    </div>
+  </dialog>
+
+  <dialog id="rules-dialog" class="dialog">
+    <h2 class="dialog-title">玩法规则</h2>
+    <div class="rules">
+      <p>每位玩家有 21 块颜色相同的棋子（1 到 5 格不等，共 89 格）。按 <b>蓝 → 黄 → 红 → 绿</b> 的顺序轮流放一块。</p>
+      <ol>
+        <li><b>第一块</b>必须盖住自己的起始角（棋盘上带颜色圆圈的格子）。</li>
+        <li>之后每一块都要和自己已有的棋子<b>角对角</b>相接。</li>
+        <li>自己的棋子之间<b>不能边贴边</b>；和别人的棋子边贴边没关系。</li>
+        <li>棋子可以任意旋转、翻转。放下后不能移动。</li>
+        <li>某位玩家无处可放时自动出局，其他人继续，直到所有人都放不下为止。</li>
+      </ol>
+      <p><b>计分</b>：每个没放上去的格子扣 1 分；21 块全部放完加 15 分，如果最后一块是单格再加 5 分。分高者胜。</p>
+      <p><b>双人 14×14</b>：两位玩家分别从棋盘内侧的两个起点开始，其余规则相同。</p>
+      <p><b>操作</b>：点选右侧棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn primary" id="rules-close">知道了</button>
+    </div>
+  </dialog>
+
+</div>
+<script src="js/pieces.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
