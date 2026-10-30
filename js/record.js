@@ -10,7 +10,8 @@
 })(typeof self !== 'undefined' ? self : this, function (Engine, Online) {
   'use strict';
 
-  var FORMAT = 'blokus-record';
+  var FORMAT = 'blockturf-record';
+  var LEGACY_FORMAT = 'blokus-record';
   var VERSION = 1;
   var MAX_ACTIONS = 600;
   var ID_RE = /^[a-z0-9]{4,24}$/;
@@ -61,7 +62,7 @@
    * 动作在第一条格式不对或不合法处截断。
    */
   function parse(raw) {
-    if (!raw || typeof raw !== 'object' || raw.format !== FORMAT) return null;
+    if (!raw || typeof raw !== 'object' || (raw.format !== FORMAT && raw.format !== LEGACY_FORMAT)) return null;
     if (!isInt(raw.v) || raw.v < 1 || raw.v > VERSION) return null;
     if (!Engine.isMode(raw.mode)) return null;
     var seats = Engine.MODES[raw.mode].seats;
@@ -128,13 +129,28 @@
     };
   }
 
-  function seatName(pl) { return pl.label + '方 · ' + pl.name; }
+  // 可读流程用的文字；界面按当前语言传入，不传时用中文
+  var ZH_LABELS = {
+    app: '角斗士棋',
+    seat: function (pl) { return pl.label + '方 · ' + pl.name; },
+    piece: function (piece) { return piece.name; },
+    blocked: '无处可放',
+    stopped: '停手',
+    over: '对局结束'
+  };
+
+  function labelsOf(labels) {
+    var out = {};
+    for (var k in ZH_LABELS) if (Object.prototype.hasOwnProperty.call(ZH_LABELS, k)) out[k] = labels && labels[k] ? labels[k] : ZH_LABELS[k];
+    return out;
+  }
 
   /**
    * 导出用的完整文件：除了回放要用的座位和动作，还附上可读的下棋流程和结果。
    * 导入时只读 format / v / id / date / mode / online / players / actions。
    */
-  function toExport(rec) {
+  function toExport(rec, labels) {
+    var L = labelsOf(labels);
     var config = configOf(rec);
     var st = Engine.createGame(config);
     var moves = [];
@@ -143,9 +159,9 @@
     function flushEvents() {
       for (; cursor < st.events.length; cursor++) {
         var ev = st.events[cursor];
-        if (ev.type === 'blocked') moves.push({ player: seatName(st.players[ev.player]), event: '无处可放' });
-        else if (ev.type === 'resign') moves.push({ player: seatName(st.players[ev.player]), event: '停手' });
-        else if (ev.type === 'over') moves.push({ event: '对局结束' });
+        if (ev.type === 'blocked') moves.push({ player: L.seat(st.players[ev.player]), event: L.blocked });
+        else if (ev.type === 'resign') moves.push({ player: L.seat(st.players[ev.player]), event: L.stopped });
+        else if (ev.type === 'over') moves.push({ event: L.over });
       }
     }
     flushEvents();
@@ -154,7 +170,7 @@
       if (a.type === 'place') {
         placed++;
         var piece = st.set.pieces[a.piece];
-        var m = { n: placed, player: seatName(st.players[a.player]), piece: piece.name, size: piece.size, cells: st.lastMove.cells };
+        var m = { n: placed, player: L.seat(st.players[a.player]), piece: L.piece(piece), size: piece.size, cells: st.lastMove.cells };
         if (a.note) m.note = a.note;
         moves.push(m);
       }
@@ -163,7 +179,7 @@
     var out = {
       format: FORMAT,
       v: VERSION,
-      app: '角斗士棋',
+      app: L.app,
       id: rec.id,
       date: rec.date,
       mode: rec.mode,
@@ -181,15 +197,15 @@
     };
     if (st.over) {
       out.result = Engine.standings(st).map(function (r) {
-        return { rank: r.rank, player: seatName(r.player), piecesLeft: r.piecesLeft, cellsLeft: r.remainingSquares };
+        return { rank: r.rank, player: L.seat(r.player), piecesLeft: r.piecesLeft, cellsLeft: r.remainingSquares };
       });
     }
     return out;
   }
 
   // 导出文件的文本：顶层字段一行一个，列表（座位、动作、流程、结果）每项一行，方便直接阅读
-  function stringify(rec) {
-    var obj = toExport(rec);
+  function stringify(rec, labels) {
+    var obj = toExport(rec, labels);
     var keys = Object.keys(obj);
     var lines = ['{'];
     keys.forEach(function (k, i) {

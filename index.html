@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>角斗士棋</title>
-<meta name="description" content="角斗士棋（Blokus）网页版：方块、三角块、立体与三棱柱四种玩法，1–4 人同屏或联机对战，可与三档难度的电脑或接入的大模型对弈。">
+<title>BlockTurf</title>
+<meta name="description" content="BlockTurf: a strategy game where you claim territory corner to corner, on square, triangle and hexagon boards plus original 3D modes. Up to 6 players on one screen or online, against three AI levels or your own LLM.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&family=ZCOOL+QingKe+HuangYou&display=swap">
@@ -16,94 +16,98 @@
   <!-- ============ 开局设置 ============ -->
   <section id="setup" class="screen setup">
     <div class="setup-hero">
-      <h1 class="logo" aria-label="角斗士棋">
-        <span class="logo-ch" style="--c: var(--p-blue)">角</span><span class="logo-ch" style="--c: var(--p-yellow)">斗</span><span class="logo-ch" style="--c: var(--p-red)">士</span><span class="logo-ch" style="--c: var(--p-green)">棋</span>
-      </h1>
-      <p class="tagline">Blokus · 方块与三角块，角对角抢地盘</p>
+      <h1 class="logo words" id="logo" aria-label="BlockTurf"><span class="logo-ch" style="--c: var(--p-blue)">Block</span><span class="logo-ch" style="--c: var(--p-yellow)">Turf</span></h1>
+      <p class="tagline" data-i18n="app.tagline">Squares, triangles and hexagons — claim the board corner to corner</p>
       <div class="demo-frame">
-        <canvas id="demo-board" aria-label="电脑自动对弈演示"></canvas>
-        <span class="demo-label" id="demo-label">电脑演示局</span>
+        <canvas id="demo-board" data-i18n-attr="aria-label:demo.aria" aria-label="AI self-play demo"></canvas>
+        <span class="demo-label" id="demo-label"></span>
       </div>
     </div>
 
     <div class="setup-panel">
-      <div class="tabs" role="tablist" aria-label="对战方式">
-        <button type="button" role="tab" class="tab" id="tab-local" aria-controls="local-panel" aria-selected="true">本地对战</button>
-        <button type="button" role="tab" class="tab" id="tab-online" aria-controls="online-panel" aria-selected="false">联机对战</button>
+      <div class="panel-top">
+        <div class="tabs" role="tablist" data-i18n-attr="aria-label:setup.tabs" aria-label="Game type">
+          <button type="button" role="tab" class="tab" id="tab-local" aria-controls="local-panel" aria-selected="true" data-i18n="setup.tab.local">Local game</button>
+          <button type="button" role="tab" class="tab" id="tab-online" aria-controls="online-panel" aria-selected="false" data-i18n="setup.tab.online">Online</button>
+        </div>
+        <label class="lang-pick" data-i18n-attr="title:lang.label" title="Language">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
+          <select id="lang-select" data-i18n-attr="aria-label:lang.label" aria-label="Language"></select>
+        </label>
       </div>
 
       <div class="field">
-        <span class="field-label">棋盘</span>
-        <div class="seg" role="radiogroup" aria-label="棋盘">
-          <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span>标准 20×20</span></label>
-          <label><input type="radio" name="mode" id="mode-duo" value="duo"><span>双人 14×14</span></label>
-          <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span>三角块 · 六边形</span></label>
-          <label><input type="radio" name="mode" id="mode-gemblo" value="gemblo"><span>宝石阵</span></label>
-          <label><input type="radio" name="mode" id="mode-cube" value="cube"><span>立体 · 三维</span></label>
-          <label><input type="radio" name="mode" id="mode-prism" value="prism"><span>三棱柱</span></label>
+        <span class="field-label" data-i18n="setup.board">Board</span>
+        <div class="seg" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board">
+          <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span data-i18n="mode.classic">Classic 20×20</span></label>
+          <label><input type="radio" name="mode" id="mode-duo" value="duo"><span data-i18n="mode.duo">Duo 14×14</span></label>
+          <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span data-i18n="mode.trigon">Triangles</span></label>
+          <label><input type="radio" name="mode" id="mode-gemblo" value="gemblo"><span data-i18n="mode.gemblo">Gemblo</span></label>
+          <label><input type="radio" name="mode" id="mode-cube" value="cube"><span data-i18n="mode.cube">3D Cubes</span></label>
+          <label><input type="radio" name="mode" id="mode-prism" value="prism"><span data-i18n="mode.prism">Prisms</span></label>
         </div>
         <p class="field-note" id="mode-note"></p>
       </div>
 
       <form id="local-panel" class="panel-body" role="tabpanel" aria-labelledby="tab-local" autocomplete="off">
         <div class="field">
-          <span class="field-label">快速开局</span>
+          <span class="field-label" data-i18n="setup.presets">Quick start</span>
           <div class="presets" id="presets"></div>
         </div>
 
         <div class="field">
-          <span class="field-label">座位 <small>按行棋顺序</small></span>
+          <span class="field-label"><span data-i18n="setup.seats">Seats</span> <small data-i18n="setup.seatsOrder">in turn order</small></span>
           <ol class="seats" id="seats"></ol>
         </div>
 
         <div class="field options">
-          <label class="check"><input type="checkbox" id="opt-hints" checked><span>显示可落子的角点</span></label>
-          <label class="check"><input type="checkbox" id="opt-sound" checked><span>音效</span></label>
-          <label class="check"><input type="checkbox" id="opt-dark"><span>深色主题</span></label>
-          <label class="inline-select">电脑速度
+          <label class="check"><input type="checkbox" id="opt-hints" checked><span data-i18n="opt.hints">Show corner hints</span></label>
+          <label class="check"><input type="checkbox" id="opt-sound" checked><span data-i18n="opt.sound">Sound</span></label>
+          <label class="check"><input type="checkbox" id="opt-dark"><span data-i18n="opt.dark">Dark theme</span></label>
+          <label class="inline-select"><span data-i18n="opt.speed">AI speed</span>
             <select id="opt-speed">
-              <option value="fast">快</option>
-              <option value="normal" selected>中</option>
-              <option value="slow">慢</option>
+              <option value="fast" data-i18n="speed.fast">Fast</option>
+              <option value="normal" selected data-i18n="speed.normal">Medium</option>
+              <option value="slow" data-i18n="speed.slow">Slow</option>
             </select>
           </label>
-          <button type="button" class="btn ghost small llm-open" id="llm-open">大模型设置…</button>
+          <button type="button" class="btn ghost small llm-open" id="llm-open" data-i18n="llm.open">LLM settings…</button>
         </div>
 
         <p class="form-error" id="setup-error" role="alert" hidden></p>
 
         <div class="setup-actions">
-          <button type="submit" class="btn primary big" id="start-btn">开始对局</button>
-          <button type="button" class="btn" id="resume-btn" hidden>继续上局</button>
-          <button type="button" class="btn ghost" id="records-open">对局记录</button>
-          <button type="button" class="btn ghost rules-open">玩法规则</button>
+          <button type="submit" class="btn primary big" id="start-btn" data-i18n="setup.start">Start game</button>
+          <button type="button" class="btn" id="resume-btn" hidden data-i18n="setup.resume">Resume last game</button>
+          <button type="button" class="btn ghost" id="records-open" data-i18n="setup.records">Game records</button>
+          <button type="button" class="btn ghost rules-open" data-i18n="setup.rules">How to play</button>
         </div>
       </form>
 
       <div id="online-panel" class="panel-body" role="tabpanel" aria-labelledby="tab-online" hidden>
         <div class="field">
-          <label class="field-label" for="nick">你的昵称</label>
-          <input type="text" id="nick" maxlength="12" placeholder="玩家" autocomplete="nickname">
+          <label class="field-label" for="nick" data-i18n="online.nick">Your nickname</label>
+          <input type="text" id="nick" maxlength="12" data-i18n-attr="placeholder:player.default" placeholder="Player" autocomplete="nickname">
         </div>
         <div class="online-grid">
           <div class="online-card">
-            <span class="field-label">开一个新房间</span>
-            <p>按上面选的棋盘建房，你来安排座位和电脑。</p>
-            <button type="button" class="btn primary" id="create-room">创建房间</button>
+            <span class="field-label" data-i18n="online.createTitle">Start a new room</span>
+            <p data-i18n="online.createText">Uses the board chosen above; you arrange the seats and AI.</p>
+            <button type="button" class="btn primary" id="create-room" data-i18n="online.create">Create room</button>
           </div>
           <div class="online-card">
-            <label class="field-label" for="join-code">加入朋友的房间</label>
+            <label class="field-label" for="join-code" data-i18n="online.joinTitle">Join a friend’s room</label>
             <div class="join-row">
-              <input type="text" id="join-code" maxlength="7" placeholder="5 位房间号" autocapitalize="characters" spellcheck="false">
-              <button type="button" class="btn" id="join-room">加入</button>
+              <input type="text" id="join-code" maxlength="7" data-i18n-attr="placeholder:online.joinPlaceholder" placeholder="5-character code" autocapitalize="characters" spellcheck="false">
+              <button type="button" class="btn" id="join-room" data-i18n="online.join">Join</button>
             </div>
           </div>
         </div>
         <button type="button" class="btn" id="rejoin-room" hidden></button>
-        <p class="online-note" id="online-note" role="status">正在检查联机功能…</p>
+        <p class="online-note" id="online-note" role="status" data-i18n="online.checking">Checking online play…</p>
         <p class="form-error" id="online-error" role="alert" hidden></p>
         <div class="setup-actions">
-          <button type="button" class="btn ghost rules-open">玩法规则</button>
+          <button type="button" class="btn ghost rules-open" data-i18n="setup.rules">How to play</button>
         </div>
       </div>
     </div>
@@ -112,46 +116,46 @@
   <!-- ============ 联机房间 ============ -->
   <section id="lobby" class="screen lobby" hidden>
     <header class="topbar">
-      <button type="button" class="btn ghost" id="lobby-leave">‹ 离开房间</button>
+      <button type="button" class="btn ghost" id="lobby-leave" data-i18n="lobby.leave">‹ Leave room</button>
       <div class="room-code">
-        <span class="field-label">房间号</span>
+        <span class="field-label" data-i18n="lobby.code">Room code</span>
         <b id="lobby-code">-----</b>
-        <button type="button" class="btn" id="copy-code">复制</button>
+        <button type="button" class="btn" id="copy-code" data-i18n="lobby.copy">Copy</button>
       </div>
       <span class="conn" id="lobby-conn"></span>
     </header>
     <div class="lobby-body">
       <div class="lobby-panel">
-        <p class="lobby-hint">把房间号发给朋友，在「联机对战」里输入就能加入。人齐后由房主开始。</p>
+        <p class="lobby-hint" data-i18n="lobby.hint">Send the room code to friends — they join under “Online”. The host starts the game when everyone is seated.</p>
         <div class="field">
-          <span class="field-label">棋盘</span>
-          <div class="seg" id="lobby-mode" role="radiogroup" aria-label="棋盘"></div>
+          <span class="field-label" data-i18n="setup.board">Board</span>
+          <div class="seg" id="lobby-mode" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board"></div>
         </div>
         <div class="field">
-          <span class="field-label">座位 <small>按行棋顺序</small></span>
+          <span class="field-label"><span data-i18n="setup.seats">Seats</span> <small data-i18n="setup.seatsOrder">in turn order</small></span>
           <ol class="seats" id="lobby-seats"></ol>
         </div>
         <div class="field options">
-          <label class="inline-select">电脑速度
+          <label class="inline-select"><span data-i18n="opt.speed">AI speed</span>
             <select id="lobby-speed">
-              <option value="fast">快</option>
-              <option value="normal">中</option>
-              <option value="slow">慢</option>
+              <option value="fast" data-i18n="speed.fast">Fast</option>
+              <option value="normal" data-i18n="speed.normal">Medium</option>
+              <option value="slow" data-i18n="speed.slow">Slow</option>
             </select>
           </label>
-          <label class="inline-select">你的昵称
-            <input type="text" id="lobby-nick" maxlength="12" placeholder="玩家">
+          <label class="inline-select"><span data-i18n="online.nick">Your nickname</span>
+            <input type="text" id="lobby-nick" maxlength="12" data-i18n-attr="placeholder:player.default" placeholder="Player">
           </label>
-          <button type="button" class="btn ghost small llm-open" id="lobby-llm-open">大模型设置…</button>
+          <button type="button" class="btn ghost small llm-open" id="lobby-llm-open" data-i18n="llm.open">LLM settings…</button>
         </div>
         <p class="form-error" id="lobby-error" role="alert" hidden></p>
         <div class="setup-actions">
-          <button type="button" class="btn primary big" id="lobby-start">开始对局</button>
+          <button type="button" class="btn primary big" id="lobby-start" data-i18n="setup.start">Start game</button>
           <span class="lobby-wait" id="lobby-wait"></span>
         </div>
       </div>
       <aside class="lobby-side">
-        <span class="field-label">在线</span>
+        <span class="field-label" data-i18n="lobby.people">Online</span>
         <ul class="people" id="lobby-people"></ul>
       </aside>
     </div>
@@ -160,7 +164,7 @@
   <!-- ============ 对局 ============ -->
   <section id="game" class="screen game" hidden>
     <header class="topbar">
-      <button type="button" class="btn ghost" id="menu-btn" title="返回菜单（对局自动保存）">‹ 菜单</button>
+      <button type="button" class="btn ghost" id="menu-btn">‹ Menu</button>
       <div class="turn" id="turn" aria-live="polite">
         <span class="turn-dot"></span>
         <span class="turn-text" id="turn-text"></span>
@@ -168,34 +172,35 @@
       </div>
       <span class="room-chip" id="room-chip" hidden></span>
       <div class="top-actions">
-        <button type="button" class="btn" id="hint-btn" title="提示（H）">提示</button>
-        <button type="button" class="btn" id="undo-btn" title="悔棋（Ctrl+Z）">悔棋</button>
-        <button type="button" class="btn" id="pause-btn" hidden>暂停</button>
-        <button type="button" class="btn" id="result-btn" hidden>结果</button>
-        <button type="button" class="btn icon" id="theme-btn" aria-pressed="false" title="深色主题" aria-label="深色主题"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></svg></button>
-        <button type="button" class="btn icon" id="sound-btn" aria-pressed="true" title="音效" aria-label="音效"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6"/><path class="wave" d="M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+        <button type="button" class="btn" id="hint-btn" data-i18n="game.hint" data-i18n-attr="title:game.hintTitle" title="Hint (H)">Hint</button>
+        <button type="button" class="btn" id="undo-btn" data-i18n="game.undo" data-i18n-attr="title:game.undoTitle" title="Undo (Ctrl+Z)">Undo</button>
+        <button type="button" class="btn" id="pause-btn" hidden>Pause</button>
+        <button type="button" class="btn" id="result-btn" hidden data-i18n="game.result">Results</button>
+        <button type="button" class="btn icon help-btn" id="help-btn" data-i18n-attr="title:game.helpTitle;aria-label:game.help" title="Show the guide again" aria-label="Guide">?</button>
+        <button type="button" class="btn icon" id="theme-btn" aria-pressed="false" data-i18n-attr="title:game.dark;aria-label:game.dark" title="Dark theme" aria-label="Dark theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></svg></button>
+        <button type="button" class="btn icon" id="sound-btn" aria-pressed="true" data-i18n-attr="title:game.sound;aria-label:game.sound" title="Sound" aria-label="Sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6"/><path class="wave" d="M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
       </div>
     </header>
 
     <div class="game-layout">
-      <aside class="players" id="players" aria-label="玩家"></aside>
+      <aside class="players" id="players" data-i18n-attr="aria-label:game.players" aria-label="Players"></aside>
 
       <div class="board-area">
         <div class="board-wrap" id="board-wrap">
-          <canvas id="board" tabindex="0" aria-label="棋盘"></canvas>
+          <canvas id="board" tabindex="0" data-i18n-attr="aria-label:game.board" aria-label="Board"></canvas>
           <div class="toast" id="toast" role="status" hidden></div>
-          <div class="cam-ctl" id="cam-ctl" role="group" aria-label="视角与透视" hidden>
+          <div class="cam-ctl" id="cam-ctl" role="group" data-i18n-attr="aria-label:cam.group" aria-label="View and see-through" hidden>
             <div class="cam-row">
-            <button type="button" class="btn icon" id="cam-left" title="视角向左转（Q）" aria-label="视角向左转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 4 0 1 1-8-4"/><path d="M12 4.5 12 8l3.5 1.5"/></svg></button>
-            <button type="button" class="btn icon" id="cam-up" title="抬高视角" aria-label="抬高视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
-            <button type="button" class="btn icon" id="cam-down" title="放低视角" aria-label="放低视角"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
-            <button type="button" class="btn icon" id="cam-right" title="视角向右转（E）" aria-label="视角向右转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 4 0 1 0 8-4"/><path d="M12 4.5 12 8l-3.5 1.5"/></svg></button>
+            <button type="button" class="btn icon" id="cam-left" data-i18n-attr="title:cam.left;aria-label:cam.leftAria" title="Orbit left (Q)" aria-label="Orbit left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 4 0 1 1-8-4"/><path d="M12 4.5 12 8l3.5 1.5"/></svg></button>
+            <button type="button" class="btn icon" id="cam-up" data-i18n-attr="title:cam.up;aria-label:cam.up" title="Raise the view" aria-label="Raise the view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+            <button type="button" class="btn icon" id="cam-down" data-i18n-attr="title:cam.down;aria-label:cam.down" title="Lower the view" aria-label="Lower the view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+            <button type="button" class="btn icon" id="cam-right" data-i18n-attr="title:cam.right;aria-label:cam.rightAria" title="Orbit right (E)" aria-label="Orbit right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 4 0 1 0 8-4"/><path d="M12 4.5 12 8l-3.5 1.5"/></svg></button>
             </div>
             <div class="cam-row">
-              <button type="button" class="btn icon toggle" id="xray-btn" aria-pressed="false" title="透视：别人的方块半透明，自己的保持不透明（X）" aria-label="透视"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-              <label class="layer-ctl" title="只显示下面几层（[ 与 ]）">层
-                <input type="range" id="layer-range" min="1" max="5" value="5" step="1" aria-label="显示到第几层">
-                <span id="layer-val">全部</span>
+              <button type="button" class="btn icon toggle" id="xray-btn" aria-pressed="false" data-i18n-attr="title:cam.xray;aria-label:cam.xrayAria" title="See-through: other pieces turn translucent, yours stay solid (X)" aria-label="See-through"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+              <label class="layer-ctl" data-i18n-attr="title:cam.layerTitle" title="Show only the lower layers ([ and ])"><span data-i18n="cam.layer">Layers</span>
+                <input type="range" id="layer-range" min="1" max="5" value="5" step="1" data-i18n-attr="aria-label:cam.layerAria" aria-label="Show up to layer">
+                <span id="layer-val"></span>
               </label>
             </div>
           </div>
@@ -206,43 +211,43 @@
         <div class="dock-head">
           <span class="dock-title" id="dock-title"></span>
           <span class="dock-count" id="dock-count"></span>
-          <button type="button" class="btn ghost" id="dock-back" hidden>看自己的</button>
+          <button type="button" class="btn ghost" id="dock-back" hidden data-i18n="dock.back">Mine</button>
         </div>
         <div class="selected">
           <div class="sel-preview" id="sel-preview" aria-live="polite"></div>
           <div class="sel-controls">
-            <button type="button" class="btn icon" id="rot-ccw" title="逆时针旋转（E）" aria-label="逆时针旋转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/></svg></button>
-            <button type="button" class="btn icon" id="rot-cw" title="顺时针旋转（R / 右键 / 滚轮）" aria-label="顺时针旋转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 4.5V9h-4.5"/></svg></button>
-            <button type="button" class="btn icon" id="flip-btn" title="翻转（F）" aria-label="翻转"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 2.6"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/></svg></button>
-            <button type="button" class="btn icon" id="roll-btn" title="侧翻（G）" aria-label="侧翻" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18.5 3v4h-4"/><rect x="8" y="11" width="8" height="8" rx="1"/></svg></button>
-            <button type="button" class="btn primary" id="place-btn" disabled>放置</button>
+            <button type="button" class="btn icon" id="rot-ccw" data-i18n-attr="aria-label:ctl.rotLeftAria" aria-label="Rotate left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/></svg></button>
+            <button type="button" class="btn icon" id="rot-cw" data-i18n-attr="aria-label:ctl.rotRightAria" aria-label="Rotate right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 4.5V9h-4.5"/></svg></button>
+            <button type="button" class="btn icon" id="flip-btn" data-i18n-attr="aria-label:ctl.flipAria" aria-label="Flip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 2.6"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/></svg></button>
+            <button type="button" class="btn icon" id="roll-btn" data-i18n-attr="title:ctl.roll;aria-label:ctl.rollAria" title="Roll sideways (G)" aria-label="Roll sideways" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18.5 3v4h-4"/><rect x="8" y="11" width="8" height="8" rx="1"/></svg></button>
+            <button type="button" class="btn primary" id="place-btn" disabled data-i18n="ctl.place">Place</button>
           </div>
         </div>
-        <div class="tray" id="tray" role="listbox" aria-label="剩余棋子"></div>
-        <p class="keys" id="keys-help">点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消</p>
-        <button type="button" class="btn ghost danger-text" id="resign-btn">停手，不再落子</button>
+        <div class="tray" id="tray" role="listbox" data-i18n-attr="aria-label:tray.aria" aria-label="Pieces left"></div>
+        <p class="keys" id="keys-help"></p>
+        <button type="button" class="btn ghost danger-text" id="resign-btn" data-i18n="resign.button">Stop — no more moves</button>
         <div class="replay-panel" id="replay-panel" hidden>
-          <div class="replay-controls" role="group" aria-label="回放控制">
-            <button type="button" class="btn icon" id="rp-first" title="回到开局（Home）" aria-label="回到开局"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M18 6l-8 6 8 6z"/></svg></button>
-            <button type="button" class="btn icon" id="rp-prev" title="上一步（←）" aria-label="上一步"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
-            <button type="button" class="btn primary rp-play" id="rp-play">播放</button>
-            <button type="button" class="btn icon" id="rp-next" title="下一步（→）" aria-label="下一步"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
-            <button type="button" class="btn icon" id="rp-last" title="跳到最后（End）" aria-label="跳到最后"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M6 6l8 6-8 6z"/></svg></button>
+          <div class="replay-controls" role="group" data-i18n-attr="aria-label:rp.controls" aria-label="Replay controls">
+            <button type="button" class="btn icon" id="rp-first" data-i18n-attr="title:rp.first;aria-label:rp.firstAria" title="Back to the start (Home)" aria-label="Back to the start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M18 6l-8 6 8 6z"/></svg></button>
+            <button type="button" class="btn icon" id="rp-prev" data-i18n-attr="title:rp.prev;aria-label:rp.prevAria" title="Previous step (←)" aria-label="Previous step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+            <button type="button" class="btn primary rp-play" id="rp-play">Play</button>
+            <button type="button" class="btn icon" id="rp-next" data-i18n-attr="title:rp.next;aria-label:rp.nextAria" title="Next step (→)" aria-label="Next step"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+            <button type="button" class="btn icon" id="rp-last" data-i18n-attr="title:rp.last;aria-label:rp.lastAria" title="Jump to the end (End)" aria-label="Jump to the end"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M6 6l8 6-8 6z"/></svg></button>
           </div>
-          <input type="range" id="rp-range" min="0" max="0" value="0" step="1" aria-label="跳到第几步">
+          <input type="range" id="rp-range" min="0" max="0" value="0" step="1" data-i18n-attr="aria-label:rp.range" aria-label="Jump to step">
           <div class="replay-row">
-            <label class="inline-select">速度
+            <label class="inline-select"><span data-i18n="rp.speed">Speed</span>
               <select id="rp-speed">
-                <option value="0.5">慢</option>
-                <option value="1" selected>中</option>
-                <option value="2">快</option>
-                <option value="4">很快</option>
+                <option value="0.5" data-i18n="rp.speedSlow">Slow</option>
+                <option value="1" selected data-i18n="rp.speedNormal">Medium</option>
+                <option value="2" data-i18n="rp.speedFast">Fast</option>
+                <option value="4" data-i18n="rp.speedFaster">Very fast</option>
               </select>
             </label>
-            <button type="button" class="btn small" id="rp-export">导出文件</button>
+            <button type="button" class="btn small" id="rp-export" data-i18n="rp.export">Export file</button>
           </div>
-          <ol class="replay-moves" id="rp-moves" aria-label="下棋流程"></ol>
-          <p class="keys">← → 逐步 · 空格播放 / 暂停 · 点列表跳到那一步</p>
+          <ol class="replay-moves" id="rp-moves" data-i18n-attr="aria-label:rp.moves" aria-label="Move list"></ol>
+          <p class="keys" data-i18n="rp.keys">← → step · Space play / pause · click a move to jump to it</p>
         </div>
       </aside>
     </div>
@@ -250,34 +255,34 @@
 
   <!-- ============ 弹窗 ============ -->
   <dialog id="end-dialog" class="dialog">
-    <h2 class="dialog-title" id="end-title">对局结束</h2>
+    <h2 class="dialog-title" id="end-title" data-i18n="end.title">Game over</h2>
     <table class="results">
-      <thead><tr><th>名次</th><th>玩家</th><th class="num">剩余</th></tr></thead>
+      <thead><tr><th data-i18n="end.rank">Rank</th><th data-i18n="end.player">Player</th><th class="num" data-i18n="end.left">Left</th></tr></thead>
       <tbody id="end-rows"></tbody>
     </table>
     <p class="dialog-note" id="end-note"></p>
     <div class="record-bar">
-      <span class="record-label">对局记录</span>
-      <button type="button" class="btn small" id="end-save">保存到本机</button>
-      <button type="button" class="btn small" id="end-export">导出文件</button>
+      <span class="record-label" data-i18n="record.label">Game record</span>
+      <button type="button" class="btn small" id="end-save" data-i18n="record.save">Save on this device</button>
+      <button type="button" class="btn small" id="end-export" data-i18n="record.export">Export file</button>
       <span class="record-msg" id="end-record-note" role="status"></span>
     </div>
     <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="end-view">查看棋盘</button>
-      <button type="button" class="btn" id="end-menu">返回菜单</button>
-      <button type="button" class="btn primary" id="end-again">再来一局</button>
+      <button type="button" class="btn ghost" id="end-view" data-i18n="end.view">View board</button>
+      <button type="button" class="btn" id="end-menu" data-i18n="end.menu">Main menu</button>
+      <button type="button" class="btn primary" id="end-again" data-i18n="end.again">Play again</button>
     </div>
   </dialog>
 
   <dialog id="records-dialog" class="dialog wide">
-    <h2 class="dialog-title">对局记录</h2>
-    <p class="dialog-note">保存在这台设备的浏览器里，最多 60 局，超出时自动删掉最早的。导出的文件包含完整的下棋流程，可以在任何设备上导入回放。</p>
+    <h2 class="dialog-title" data-i18n="records.title">Game records</h2>
+    <p class="dialog-note" data-i18n="records.note">Stored in this browser, up to 60 games (the oldest are removed first). Exported files contain every move and can be imported for replay on any device.</p>
     <p class="record-msg block" id="records-note" role="status" hidden></p>
     <ul class="records" id="records-list"></ul>
     <input type="file" id="records-file" accept=".json,application/json" hidden>
     <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="records-import">导入文件…</button>
-      <button type="button" class="btn primary" id="records-close">关闭</button>
+      <button type="button" class="btn ghost" id="records-import" data-i18n="records.import">Import file…</button>
+      <button type="button" class="btn primary" id="records-close" data-i18n="records.close">Close</button>
     </div>
   </dialog>
 
@@ -285,116 +290,124 @@
     <h2 class="dialog-title" id="confirm-title"></h2>
     <p id="confirm-text"></p>
     <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="confirm-no">取消</button>
-      <button type="button" class="btn primary" id="confirm-yes">确定</button>
+      <button type="button" class="btn ghost" id="confirm-no" data-i18n="confirm.cancel">Cancel</button>
+      <button type="button" class="btn primary" id="confirm-yes" data-i18n="confirm.ok">OK</button>
     </div>
   </dialog>
 
   <dialog id="llm-dialog" class="dialog">
-    <h2 class="dialog-title">大模型电脑</h2>
-    <p class="dialog-note">把电脑的难度设为「大模型」后，由这里的模型来下棋。棋力来自程序的搜索：大师电脑先把每个候选往后推演两轮，只把推演结果差不多一样好的几步交给模型，由它结合局势取舍；只有一步明显最好时直接走，不问模型。出错或超时时，这一步由大师电脑代下。可以建多个配置，在座位上分别选用；联机时用房主这台设备上同名的配置。</p>
+    <h2 class="dialog-title" data-i18n="llm.title">LLM player</h2>
+    <p class="dialog-note" data-i18n="llm.intro"></p>
     <form id="llm-form" class="llm-form" autocomplete="off">
       <div class="field llm-profiles">
-        <label class="field-label" for="llm-profile">配置 <small>每个座位可以选不同的配置</small></label>
+        <label class="field-label" for="llm-profile"><span data-i18n="llm.profiles">Profiles</span> <small data-i18n="llm.profilesSmall">each seat can use a different one</small></label>
         <div class="llm-profile-bar">
-          <select id="llm-profile" aria-label="选择要编辑的配置"></select>
-          <button type="button" class="btn small" id="llm-profile-add">新建</button>
-          <button type="button" class="btn small ghost" id="llm-profile-del">删除</button>
+          <select id="llm-profile" data-i18n-attr="aria-label:llm.profileAria" aria-label="Profile to edit"></select>
+          <button type="button" class="btn small" id="llm-profile-add" data-i18n="llm.new">New</button>
+          <button type="button" class="btn small ghost" id="llm-profile-del" data-i18n="llm.delete">Delete</button>
         </div>
-        <label class="field-label" for="llm-profile-name">名称</label>
-        <input type="text" id="llm-profile-name" maxlength="16" placeholder="例如 DeepSeek、Jev">
+        <label class="field-label" for="llm-profile-name" data-i18n="llm.name">Name</label>
+        <input type="text" id="llm-profile-name" maxlength="16" data-i18n-attr="placeholder:llm.namePlaceholder" placeholder="e.g. DeepSeek, Jev">
       </div>
       <div class="field" id="llm-provider-field">
-        <span class="field-label">模型来源</span>
-        <div class="seg small" role="radiogroup" aria-label="模型来源">
-          <label><input type="radio" name="llm-provider" id="llm-provider-openai" value="openai"><span>OpenAI 兼容接口</span></label>
-          <label><input type="radio" name="llm-provider" id="llm-provider-jev" value="jev"><span>Jev（TypeSafe）</span></label>
-          <label id="llm-provider-claude-label" hidden><input type="radio" name="llm-provider" id="llm-provider-claude" value="claude"><span>本页面自带的 Claude</span></label>
+        <span class="field-label" data-i18n="llm.source">Model source</span>
+        <div class="seg small" role="radiogroup" data-i18n-attr="aria-label:llm.source" aria-label="Model source">
+          <label><input type="radio" name="llm-provider" id="llm-provider-openai" value="openai"><span data-i18n="llm.openai">OpenAI-compatible API</span></label>
+          <label><input type="radio" name="llm-provider" id="llm-provider-jev" value="jev"><span data-i18n="llm.jev">Jev (TypeSafe)</span></label>
+          <label id="llm-provider-claude-label" hidden><input type="radio" name="llm-provider" id="llm-provider-claude" value="claude"><span data-i18n="llm.claude">Claude on this page</span></label>
         </div>
       </div>
       <div id="llm-endpoint" class="llm-fields">
-        <label class="field-label" for="llm-url">接口地址</label>
+        <label class="field-label" for="llm-url" data-i18n="llm.url">API URL</label>
         <input type="url" id="llm-url" placeholder="https://api.openai.com/v1" spellcheck="false">
-        <label class="field-label" for="llm-key">API Key</label>
-        <input type="password" id="llm-key" placeholder="sk-…（本地模型可留空）" spellcheck="false" autocomplete="off">
-        <label class="field-label" for="llm-model">模型</label>
-        <input type="text" id="llm-model" placeholder="例如 deepseek-chat、gpt-4o-mini、qwen-plus" spellcheck="false">
-        <label class="check" id="llm-nothink-row"><input type="checkbox" id="llm-nothink"><span>关闭深度思考（DeepSeek、智谱、通义千问会快很多，推荐）</span></label>
-        <p class="field-note" id="llm-openai-note">支持 OpenAI Chat Completions 格式的接口都可以用，例如 DeepSeek、OpenAI、通义千问、Kimi、智谱、OpenRouter、本地的 Ollama / LM Studio。地址填到 <code>/v1</code> 为止。</p>
+        <label class="field-label" for="llm-key" data-i18n="llm.key">API key</label>
+        <input type="password" id="llm-key" spellcheck="false" autocomplete="off">
+        <label class="field-label" for="llm-model" data-i18n="llm.model">Model</label>
+        <input type="text" id="llm-model" spellcheck="false">
+        <label class="check" id="llm-nothink-row"><input type="checkbox" id="llm-nothink"><span data-i18n="llm.nothink">Turn off deep thinking</span></label>
+        <p class="field-note" id="llm-openai-note" data-i18n-html="llm.openaiNoteHtml"></p>
         <div class="llm-presets" id="llm-jev-presets" hidden>
-          <button type="button" class="btn small" id="llm-jev-typesafe">填入 TypeSafe 官方</button>
-          <button type="button" class="btn small" id="llm-jev-openrouter">填入 OpenRouter</button>
+          <button type="button" class="btn small" id="llm-jev-typesafe" data-i18n="llm.jevTypesafe">Fill in TypeSafe</button>
+          <button type="button" class="btn small" id="llm-jev-openrouter" data-i18n="llm.jevOpenrouter">Fill in OpenRouter</button>
         </div>
-        <p class="field-note" id="llm-jev-note" hidden>Jev 是 TypeSafe 的决策模型：不写文字，直接从候选里选一步并给出把握，通常不到一秒。用 TypeSafe 控制台的密钥，或者 OpenRouter 的密钥（地址 <code>https://openrouter.ai/api/v1</code>，模型 <code>~typesafe/jev-latest</code>，会自动使用它的 Decisions 接口）。也可以填兼容 <code>/v1/systemone</code> 接口的网关或本地服务。</p>
-        <p class="field-note">密钥只保存在这台设备的浏览器里，只会发送给你填写的地址。</p>
-        <p class="field-note warn" id="llm-artifact-note" hidden>Claude 发布的页面不能访问外部网络，这里请改用「本页面自带的 Claude」；要用 DeepSeek、Jev 等接口，请在本地打开 index.html 或运行 server.js。</p>
+        <p class="field-note" id="llm-jev-note" hidden data-i18n-html="llm.jevNoteHtml"></p>
+        <p class="field-note" data-i18n="llm.keyNote">Keys are stored only in this browser and are sent only to the URL you enter.</p>
+        <p class="field-note warn" id="llm-artifact-note" hidden data-i18n="llm.artifactNote"></p>
       </div>
       <div id="llm-claude" class="llm-fields" hidden>
-        <label class="field-label" for="llm-tier">档位</label>
+        <label class="field-label" for="llm-tier" data-i18n="llm.tier">Tier</label>
         <select id="llm-tier">
-          <option value="quick">快速（几秒一步）</option>
-          <option value="default">均衡（会先思考，较慢）</option>
-          <option value="complex">深思（最强，最慢）</option>
+          <option value="quick" data-i18n="llm.tierQuick">Quick (a few seconds per move)</option>
+          <option value="default" data-i18n="llm.tierDefault">Balanced (thinks first, slower)</option>
+          <option value="complex" data-i18n="llm.tierComplex">Deep (strongest, slowest)</option>
         </select>
-        <p class="field-note">使用你自己的 Claude 额度，第一次调用时页面会请你确认。</p>
+        <p class="field-note" data-i18n="llm.claudeNote">Uses your own Claude usage; the page asks for permission the first time.</p>
       </div>
-      <label class="inline-select llm-timeout">每步最多等
-        <input type="number" id="llm-timeout" min="10" max="300" step="5" inputmode="numeric"> 秒
+      <label class="inline-select llm-timeout"><span data-i18n="llm.timeout">Wait at most</span>
+        <input type="number" id="llm-timeout" min="10" max="300" step="5" inputmode="numeric"> <span data-i18n="llm.timeoutUnit">seconds</span>
       </label>
       <p class="llm-status" id="llm-status" role="status" aria-live="polite"></p>
     </form>
     <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="llm-test">测试连接</button>
-      <button type="button" class="btn" id="llm-cancel">取消</button>
-      <button type="button" class="btn primary" id="llm-save">保存</button>
+      <button type="button" class="btn ghost" id="llm-test" data-i18n="llm.test">Test connection</button>
+      <button type="button" class="btn" id="llm-cancel" data-i18n="llm.cancel">Cancel</button>
+      <button type="button" class="btn primary" id="llm-save" data-i18n="llm.save">Save</button>
     </div>
   </dialog>
 
   <dialog id="rules-dialog" class="dialog">
-    <h2 class="dialog-title">玩法规则</h2>
+    <h2 class="dialog-title" data-i18n="rules.title">How to play</h2>
     <div class="rules">
-      <p>每位玩家有一套同色棋子，按 <b>蓝 → 黄 → 红 → 绿</b> 的顺序轮流放一块。</p>
-      <ol>
-        <li><b>第一块</b>必须盖住起点（棋盘上带圆圈的格子）。</li>
-        <li>之后每一块都要和自己已有的棋子<b>角对角</b>（只共享一个顶点）相接。</li>
-        <li>自己的棋子之间<b>不能边贴边</b>；和别人的棋子边贴边没关系。</li>
-        <li>棋子可以任意旋转、翻转。放下后不能移动。</li>
-        <li>某位玩家无处可放时自动出局，其他人继续，直到所有人都放不下为止。</li>
-      </ol>
-      <p><b>名次</b>：所有人都放不下时结束，手里剩下的格子越少越靠前；全部放完的排最前，最后一块是单格的更靠前。</p>
-      <p><b>标准 20×20</b>：21 块方块棋子（共 89 格），各自从棋盘的一个角出发。<b>双人 14×14</b>：两人从棋盘内侧的两个起点出发。</p>
-      <p><b>三角块</b>：六边形棋盘由三角形格子组成，每人 22 块三角棋子（1–6 格，共 110 格），可旋转 6 个方向。棋盘上有 6 个公共起点，第一块盖住任意一个空着的起点即可；4 人用边长 9 的棋盘，3 人用 8，2 人用 7。</p>
-      <p><b>宝石阵（Gemblo）</b>：按原版规则。棋盘由六边形格子组成，每人 18 块棋子（单格 1、双格 1、三格 3、四格 5、五格 8，共 72 格，形状与原版一致）。6 方用整块棋盘、起点在 6 个角；4 方只用中间的方形区域、起点在它的 4 个角；3 方用中间较小的六边形区域、起点在它相间的 3 个角。</p>
-      <ol>
-        <li>第一块必须盖住自己的起点。</li>
-        <li>同色的棋子不能接触；之后每块都要和自己的某块棋子<b>尖对尖</b>，相隔正好一条边的距离。</li>
-        <li>隔开的那条边如果两边是别人的<b>同一块</b>棋子，就算被挡住；落在别人两块棋子的交界处则没关系。</li>
-        <li>所有人都放不下时结束，只数没放上棋盘的格子，剩得最少的获胜（没有奖励分）。</li>
-        <li>两人对战时每人各执两色（4 方区域），在座位里把两个颜色都设为自己。</li>
-      </ol>
-            <p><b>立体（原创三维玩法）</b>：在 7×7 的地面上往上搭，最多 5 层（3 人 6×6，2 人 5×5）。每人 12 块立方体棋子（1–4 个方块，共 41 块，镜像的两块算不同的棋子）。</p>
-      <ol>
-        <li>选好棋子和朝向后，指向地面上的某一列，棋子会从上方<b>竖直落下</b>，停在地面或任何人的棋子上。不能悬空，也不能超过限高。</li>
-        <li>第一块必须盖住自己在地面上的起始角。</li>
-        <li>之后每块都要和自己已有的棋子<b>棱或角相接</b>，但<b>不能面贴面</b>：所以不能直接叠在自己的棋子正上方。</li>
-        <li>可以叠在别人的棋子上，借道翻过对手的“墙”，也可以压住对手往上长的角。</li>
-      </ol>
-      <p>操作：R 水平转，F 前翻，G 侧翻；Q / E 或棋盘角落的按钮转视角，也可以拖动空白处旋转视角。</p>
-      <p><b>三棱柱</b>：三角块的立体版。六边形地面由三角形组成，每一格是一个三棱柱，棋子同样从上方落下堆叠。每人 19 块三棱柱棋子（1–4 格，共 66 格）：可以绕竖轴每次转 60°（R），也可以上下翻转（F）。自己的棋子不能面贴面（侧面的长方形或上下的三角形都不行），必须棱或角相接。4 人用边长 4、高 4 层的棋盘，3 人边长 3、高 6 层，2 人边长 3、高 5 层；各自从六边形的一个角出发。</p>
-      <p><b>透视</b>（默认关闭）：按 X 或眼睛按钮打开后，别人的方块变成半透明，挡在待放棋子前面的更淡；自己的方块保持不透明。用 [ ] 或滑块只看下面几层。</p>
-      <p><b>电脑难度</b>：简单、普通、困难、<b>大师</b>（每步把候选往后推演两轮再选，明显强于困难）和<b>大模型</b>。</p>
-      <p><b>大模型电脑</b>：在开局页面的「大模型设置」里填写 OpenAI 兼容接口（如 DeepSeek）或 Jev 的地址、密钥和模型，可以建多个配置，每个颜色选用不同的配置（在 Claude 发布的页面里也可以用页面自带的 Claude）。棋力来自大师的搜索：只把推演结果差不多一样好的几步交给模型，由它结合局势取舍；只有一步明显最好时直接走。玩家卡片上会显示它的理由。</p>
-      <p><b>联机</b>：一人建房后把 5 位房间号发给朋友，朋友在「联机对战」里加入并入座，房主可把空座改成电脑。掉线的玩家可由房主交给电脑托管。轮到别人时，你能实时看到他正在尝试的位置（虚线轮廓）。</p>
-      <p><b>剩余棋子</b>：每位玩家卡片上显示还剩几块，小图标就是剩下的棋子，点卡片可在托盘里看大图。</p>
-      <p><b>对局记录</b>：对局结束时可以把这局保存到本机或导出成文件（包含每一步）。在开局页面的「对局记录」里可以回放、导出、删除，也可以导入别人发来的记录文件。回放时可以播放、逐步前进后退，或在下棋流程里点任意一步跳过去。</p>
-      <p><b>操作</b>：点选托盘里的棋子，移到棋盘上点击放置。电脑：R 或右键 / 滚轮旋转，F 翻转，方向键移动，回车放置。手机：点棋盘定位，再点一次同一格或按“放置”。</p>
+      <div data-i18n-html="rules.basicHtml"></div>
+      <div data-i18n-html="rules.rankingHtml"></div>
+      <div data-i18n-html="rules.classicHtml"></div>
+      <div data-i18n-html="rules.trigonHtml"></div>
+      <div data-i18n-html="rules.gembloHtml"></div>
+      <div data-i18n-html="rules.cubeHtml"></div>
+      <div data-i18n-html="rules.prismHtml"></div>
+      <div data-i18n-html="rules.xrayHtml"></div>
+      <div data-i18n-html="rules.levelsHtml"></div>
+      <div data-i18n-html="rules.llmHtml"></div>
+      <div data-i18n-html="rules.onlineHtml"></div>
+      <div data-i18n-html="rules.piecesHtml"></div>
+      <div data-i18n-html="rules.recordsHtml"></div>
+      <div data-i18n-html="rules.guideHtml"></div>
+      <div data-i18n-html="rules.controlsHtml"></div>
     </div>
     <div class="dialog-actions">
-      <button type="button" class="btn primary" id="rules-close">知道了</button>
+      <button type="button" class="btn primary" id="rules-close" data-i18n="rules.close">Got it</button>
+    </div>
+  </dialog>
+
+  <!-- 新手引导：聚光框圈出要讲的界面，卡片放在旁边 -->
+  <dialog id="tour" class="tour" data-i18n-attr="aria-label:tour.aria" aria-label="Guide">
+    <div class="tour-spot" id="tour-spot" hidden></div>
+    <div class="tour-card" id="tour-card">
+      <div class="tour-head">
+        <span class="tour-step" id="tour-step"></span>
+        <button type="button" class="btn ghost small" id="tour-skip" data-i18n="tour.skip">Skip</button>
+      </div>
+      <h2 class="tour-title" id="tour-title"></h2>
+      <div class="tour-body" id="tour-body"></div>
+      <div class="tour-actions">
+        <button type="button" class="btn" id="tour-back" data-i18n="tour.back">Back</button>
+        <button type="button" class="btn primary" id="tour-next" data-i18n="tour.next">Next</button>
+      </div>
     </div>
   </dialog>
 
 </div>
+<script src="js/i18n.js"></script>
+<script src="js/i18n/en.js"></script>
+<script src="js/i18n/zh-CN.js"></script>
+<script src="js/i18n/zh-TW.js"></script>
+<script src="js/i18n/ja.js"></script>
+<script src="js/i18n/ko.js"></script>
+<script src="js/i18n/es.js"></script>
+<script src="js/i18n/fr.js"></script>
+<script src="js/i18n/de.js"></script>
+<script src="js/i18n/pt.js"></script>
+<script src="js/i18n/ru.js"></script>
 <script src="js/pieces.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/ai.js"></script>

@@ -11,32 +11,13 @@
   var Online = BlokusOnline;
   var Net = BlokusNet;
   var Record = BlokusRecord;
+  var I18n = BlokusI18n;
+  var t = I18n.t;
   var EMPTY = Engine.EMPTY;
 
   var MODE_LIST = ['classic', 'duo', 'trigon', 'gemblo', 'cube', 'prism'];
-  var MODE_LABEL = { classic: '标准 20×20', duo: '双人 14×14', trigon: '三角块', gemblo: '宝石阵', cube: '立体', prism: '三棱柱' };
-  var MODE_NOTE = {
-    classic: '21 块方块棋子，四人各从棋盘一角出发。',
-    duo: '两人对战，从棋盘内侧的两个起点出发。',
-    trigon: '22 块三角棋子，6 个公共起点；4 人用边长 9 的六边形棋盘，人少时棋盘相应缩小。',
-    gemblo: '原版 Gemblo：六边形格棋盘，每人 18 块（1–5 格）。同色棋子不能接触，新棋子要和自己的棋子尖对尖、隔开一条边。3、4、6 方参战，人少时只用棋盘中间的区域。',
-    cube: '三维新玩法：棋子从上方落下，叠在地面或任何人的棋子上，限高 5 层。自己的棋子不能面贴面，必须棱或角相接。每人 12 块立方体棋子。',
-    prism: '三角格版的立体玩法：六边形地面由三角形组成，每格是一个三棱柱，棋子落下堆叠。自己的棋子不能面贴面，必须棱或角相接。每人 19 块三棱柱棋子（1–4 格）。'
-  };
-  var LEVEL_LABEL = { easy: '简单', normal: '普通', hard: '困难', expert: '大师', llm: '大模型' };
+  var LEVELS = ['easy', 'normal', 'hard', 'expert', 'llm'];
   var SPEED_MS = { fast: 200, normal: 550, slow: 1100 };
-  var REASON_TEXT = {
-    used: '这块棋子已经用过了',
-    bounds: '超出棋盘范围',
-    occupied: '这里已经有棋子了',
-    edge: '不能和自己的棋子边贴边',
-    start: '第一块必须盖住起点',
-    corner: '必须和自己的棋子角对角相接',
-    apex: '必须和自己的棋子尖对尖、隔开一条边（中间那条边不能被别人的同一块棋子挡住）',
-    over: '对局已经结束',
-    ceiling: '叠得太高了：最多 5 层',
-    float: '棋子会一直落到底，不能悬空'
-  };
   var View3D = BlokusView3D;
   var STORE_PREFS = 'blokus.prefs.v1';
   var STORE_SAVE = 'blokus.save.v1';
@@ -44,6 +25,7 @@
   var STORE_TOKENS = 'blokus.tokens.v1';
   var STORE_LLM = 'blokus.llm.v1';
   var STORE_RECORDS = 'blokus.records.v1';
+  var STORE_TOURS = 'blokus.tours.v1';
   var RECORD_LIMIT = 60;
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
@@ -67,6 +49,50 @@
   }
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  /* ================= 多语言 ================= */
+
+  // 拼进 innerHTML 的译文：参数先转义（数字保留，用来选复数形式）
+  function th(key, params) {
+    var safe = {};
+    for (var k in params) {
+      if (Object.prototype.hasOwnProperty.call(params, k)) safe[k] = typeof params[k] === 'number' ? params[k] : escapeHtml(params[k]);
+    }
+    return t(key, safe);
+  }
+
+  function colorName(color) { return t('color.' + color); }
+  function modeLabel(mode) { return t('mode.' + mode); }
+  function levelLabel(level) { return t('level.' + level); }
+  function joinNames(list) { return list.join(t('list.sep')); }
+  function pieceName(piece) { return piece.label ? t(piece.label.key, { letter: piece.label.letter }) : piece.name; }
+
+  // 联机与房间操作出错时给人看的说明（服务器只给错误码时按码翻译）
+  function errText(err) {
+    var code = err && err.code;
+    if (code && I18n.has('err.' + code)) return t('err.' + code);
+    if (code && /^http_\d+$/.test(code)) return t('err.http', { status: code.slice(5) });
+    if (code === 'quota_exceeded' || code === 'resource_exhausted') return t('err.quota');
+    if (code === 'unavailable') return t('err.sync');
+    return (err && err.message) || t('err.sync');
+  }
+
+  // 座位上保存的默认名字（电脑、托管、“你”“玩家2”等，存的是中文）按当前语言显示；玩家自己起的名字原样显示
+  function nameOf(pl) {
+    var name = pl.name || '';
+    if (pl.type === 'ai') {
+      if (!name || /方电脑$/.test(name)) return t('seat.aiName', { color: colorName(pl.color) });
+      var hosted = /^(.*)（托管）$/.exec(name);
+      if (hosted) return t('seat.hosted', { name: hosted[1] });
+    }
+    if (!name || name === '玩家') return t('player.default');
+    if (name === '房主') return t('lobby.host');
+    if (name === '你') return t('seat.you');
+    var numbered = /^玩家(\d+)$/.exec(name);
+    if (numbered) return t('seat.player', { n: +numbered[1] });
+    return name;
+  }
+
   function sameCell(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y && a.z === b.z; }
   function copyCell(c) { return c.z === undefined ? { x: c.x, y: c.y } : { x: c.x, z: c.z }; }
 
@@ -582,7 +608,8 @@
     hints: true,
     sound: true,
     speed: 'normal',
-    theme: 'light'
+    theme: 'light',
+    lang: ''
   };
 
   function loadPrefs() {
@@ -599,7 +626,7 @@
         var s = list[i];
         if (!s) return;
         if (['human', 'ai', 'off'].indexOf(s.type) >= 0 && !(m === 'duo' && s.type === 'off')) seat.type = s.type;
-        if (Object.prototype.hasOwnProperty.call(LEVEL_LABEL, s.level)) seat.level = s.level;
+        if (LEVELS.indexOf(s.level) >= 0) seat.level = s.level;
         if (typeof s.name === 'string') seat.name = s.name.slice(0, 12);
         if (typeof s.model === 'string') seat.model = LLM.profileName(s.model);
       });
@@ -608,6 +635,7 @@
     if (typeof saved.sound === 'boolean') p.sound = saved.sound;
     if (Object.prototype.hasOwnProperty.call(SPEED_MS, saved.speed)) p.speed = saved.speed;
     if (saved.theme === 'dark') p.theme = 'dark';
+    if (I18n.LANGS.some(function (l) { return l.code === saved.lang; })) p.lang = saved.lang;
     return p;
   }
 
@@ -615,11 +643,11 @@
   function savePrefs() { save(STORE_PREFS, prefs); }
 
   var FOUR_PRESETS = [
-    { label: '1 人 + 3 电脑', types: ['human', 'ai', 'ai', 'ai'] },
-    { label: '2 人 + 2 电脑', types: ['human', 'ai', 'human', 'ai'] },
-    { label: '3 人 + 1 电脑', types: ['human', 'human', 'human', 'ai'] },
-    { label: '4 人同屏', types: ['human', 'human', 'human', 'human'] },
-    { label: '电脑观战', types: ['ai', 'ai', 'ai', 'ai'] }
+    ['human', 'ai', 'ai', 'ai'],
+    ['human', 'ai', 'human', 'ai'],
+    ['human', 'human', 'human', 'ai'],
+    ['human', 'human', 'human', 'human'],
+    ['ai', 'ai', 'ai', 'ai']
   ];
   var PRESETS = {
     classic: FOUR_PRESETS,
@@ -627,30 +655,39 @@
     cube: FOUR_PRESETS,
     prism: FOUR_PRESETS,
     gemblo: [
-      { label: '1 人 + 5 电脑', types: ['human', 'ai', 'ai', 'ai', 'ai', 'ai'] },
-      { label: '1 人 + 3 电脑', types: ['human', 'ai', 'ai', 'ai', 'off', 'off'] },
-      { label: '1 人 + 2 电脑', types: ['human', 'ai', 'ai', 'off', 'off', 'off'] },
-      { label: '3 人 + 3 电脑', types: ['human', 'ai', 'human', 'ai', 'human', 'ai'] },
-      { label: '6 人同屏', types: ['human', 'human', 'human', 'human', 'human', 'human'] },
-      { label: '电脑观战', types: ['ai', 'ai', 'ai', 'ai', 'ai', 'ai'] }
+      ['human', 'ai', 'ai', 'ai', 'ai', 'ai'],
+      ['human', 'ai', 'ai', 'ai', 'off', 'off'],
+      ['human', 'ai', 'ai', 'off', 'off', 'off'],
+      ['human', 'ai', 'human', 'ai', 'human', 'ai'],
+      ['human', 'human', 'human', 'human', 'human', 'human'],
+      ['ai', 'ai', 'ai', 'ai', 'ai', 'ai']
     ],
     duo: [
-      { label: '人机对战', types: ['human', 'ai'] },
-      { label: '双人同屏', types: ['human', 'human'] },
-      { label: '电脑观战', types: ['ai', 'ai'] }
+      ['human', 'ai'],
+      ['human', 'human'],
+      ['ai', 'ai']
     ]
   };
 
+  function presetLabel(types) {
+    var h = types.filter(function (x) { return x === 'human'; }).length;
+    var a = types.filter(function (x) { return x === 'ai'; }).length;
+    if (!h) return t('preset.watch');
+    if (!a) return t('preset.hotseat', { n: h });
+    if (h === 1 && a === 1) return t('preset.vsAI');
+    return t('preset.mix', { n: h, a: a });
+  }
+
   function seatTypeOptions(mode) {
-    var opts = [['human', '玩家'], ['ai', '电脑']];
-    if (mode !== 'duo') opts.push(['off', '空位']);
+    var opts = [['human', t('seat.human')], ['ai', t('seat.ai')]];
+    if (mode !== 'duo') opts.push(['off', t('seat.off')]);
     return opts;
   }
 
   function renderSetup() {
     var mode = prefs.mode;
     $('mode-' + mode).checked = true;
-    $('mode-note').textContent = MODE_NOTE[mode];
+    $('mode-note').textContent = t('modeNote.' + mode);
     $('opt-hints').checked = prefs.hints;
     $('opt-sound').checked = prefs.sound;
     $('opt-speed').value = prefs.speed;
@@ -668,11 +705,11 @@
       b.type = 'button';
       b.className = 'btn';
       b.id = 'preset-' + mode + '-' + k;
-      b.textContent = pr.label;
+      b.textContent = presetLabel(pr);
       var seats = prefs.seats[mode];
-      if (pr.types.every(function (t, i) { return seats[i].type === t; })) b.classList.add('active');
+      if (pr.every(function (type, i) { return seats[i].type === type; })) b.classList.add('active');
       b.addEventListener('click', function () {
-        pr.types.forEach(function (t, i) { seats[i].type = t; });
+        pr.forEach(function (type, i) { seats[i].type = type; });
         savePrefs();
         renderSetup();
       });
@@ -689,22 +726,23 @@
       li.className = 'seat' + (s.type === 'off' ? ' off' : '');
       li.style.setProperty('--c', 'var(--p-' + seat.color + ')');
       if (s.type === 'human') humanNo++;
-      var placeholder = s.type === 'human' ? (humans === 1 ? '你' : '玩家' + humanNo) : s.type === 'ai' ? seat.label + '方电脑' : '空位';
+      var color = colorName(seat.color);
+      var placeholder = s.type === 'human' ? (humans === 1 ? t('seat.you') : t('seat.player', { n: humanNo })) : s.type === 'ai' ? t('seat.aiName', { color: color }) : t('seat.off');
       var typeRadios = seatTypeOptions(mode).map(function (o) {
         return '<label><input type="radio" name="seat-type-' + i + '" id="seat-type-' + i + '-' + o[0] + '" value="' + o[0] + '"' +
-          (s.type === o[0] ? ' checked' : '') + '><span>' + o[1] + '</span></label>';
+          (s.type === o[0] ? ' checked' : '') + '><span>' + escapeHtml(o[1]) + '</span></label>';
       }).join('');
-      var levelRadios = Object.keys(LEVEL_LABEL).map(function (lv) {
+      var levelRadios = LEVELS.map(function (lv) {
         return '<label><input type="radio" name="seat-level-' + i + '" id="seat-level-' + i + '-' + lv + '" value="' + lv + '"' +
-          (s.level === lv ? ' checked' : '') + '><span>' + LEVEL_LABEL[lv] + '</span></label>';
+          (s.level === lv ? ' checked' : '') + '><span>' + escapeHtml(levelLabel(lv)) + '</span></label>';
       }).join('');
       li.innerHTML =
-        '<span class="seat-swatch" aria-hidden="true">' + seat.label + '</span>' +
-        '<input type="text" class="seat-name" id="seat-name-' + i + '" maxlength="12" aria-label="' + seat.label + '方名字"' +
-        ' placeholder="' + placeholder + '" value="' + (s.type === 'human' ? escapeHtml(s.name) : '') + '"' + (s.type === 'human' ? '' : ' disabled') + '>' +
-        '<div class="seg small seat-type" role="radiogroup" aria-label="' + seat.label + '方">' + typeRadios + '</div>' +
-        '<div class="seat-level"' + (s.type === 'ai' ? '' : ' hidden') + '>难度 <div class="seg small" role="radiogroup" aria-label="电脑难度">' + levelRadios + '</div>' +
-        (s.level === 'llm' ? '<label class="seat-model">模型 <select id="seat-model-' + i + '" aria-label="' + seat.label + '方用的模型">' + profileOptions(s.model) + '</select></label>' : '') +
+        '<span class="seat-swatch" aria-hidden="true">' + escapeHtml(t('colorShort.' + seat.color)) + '</span>' +
+        '<input type="text" class="seat-name" id="seat-name-' + i + '" maxlength="12" aria-label="' + th('seat.nameAria', { color: color }) + '"' +
+        ' placeholder="' + escapeHtml(placeholder) + '" value="' + (s.type === 'human' ? escapeHtml(s.name) : '') + '"' + (s.type === 'human' ? '' : ' disabled') + '>' +
+        '<div class="seg small seat-type" role="radiogroup" aria-label="' + th('seat.typeAria', { color: color }) + '">' + typeRadios + '</div>' +
+        '<div class="seat-level"' + (s.type === 'ai' ? '' : ' hidden') + '>' + th('seat.level') + ' <div class="seg small" role="radiogroup" aria-label="' + th('seat.levelAria') + '">' + levelRadios + '</div>' +
+        (s.level === 'llm' ? '<label class="seat-model">' + th('seat.model') + ' <select id="seat-model-' + i + '" aria-label="' + th('seat.modelAria', { color: color }) + '">' + profileOptions(s.model) + '</select></label>' : '') +
         '</div>';
       li.querySelector('.seat-name').addEventListener('input', function (e) {
         s.name = e.target.value;
@@ -754,6 +792,7 @@
     Engine.MODES[mode].seats.forEach(function (seat, i) {
       var s = seats[i];
       if (s.type === 'off') return;
+      // 默认名字存成中文（“你”“玩家2”“蓝方电脑”），显示时由 nameOf 按当前语言翻译
       var name = s.name.trim();
       if (s.type === 'human') {
         humanNo++;
@@ -825,12 +864,12 @@
     var names = profileNames();
     if (names.indexOf(selected) < 0) selected = names[0];
     return names.map(function (n) {
-      return '<option value="' + escapeHtml(n) + '"' + (n === selected ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+      return '<option value="' + escapeHtml(n) + '"' + (n === selected ? ' selected' : '') + '>' + escapeHtml(profileLabel(n)) + '</option>';
     }).join('');
   }
 
   function llmEnv(signal) {
-    return { signal: signal, sample: llm.sample, proxy: netInfo.net && netInfo.net.llmProxy ? 'api/llm' : null };
+    return { signal: signal, sample: llm.sample, proxy: netInfo.net && netInfo.net.llmProxy ? 'api/llm' : null, lang: I18n.info().english };
   }
 
   function wait(ms) {
@@ -872,20 +911,48 @@
         if (!profileReady(profile)) return { move: best, error: 'setup', setup: true };
         return LLM.decide(game.state, profile, llmEnv(signal), results).then(function (r) {
           if (r.asked) llm.lastError = '';
-          return { move: r.move || best, note: r.reason || '' };
+          return { move: r.move || best, note: llmNote(profile, r) };
         }, function (err) {
           if (err && err.code === 'cancelled') throw err;
-          return { move: best, error: (profile.name ? profile.name + '：' : '') + ((err && err.message) || '调用失败') };
+          return { move: best, error: (profile.name ? profileLabel(profile.name) + ': ' : '') + llmErrText(err) };
         });
       });
     });
   }
 
+  // 模型落子附带的那句话：Jev 不写文字，按它的选择和把握生成
+  function llmNote(profile, r) {
+    if (!r.asked) return '';
+    if (profile.provider !== 'jev') return r.reason || '';
+    var note = t('llm.jevReason', { k: r.index + 1, n: r.options });
+    if (typeof r.confidence === 'number' && isFinite(r.confidence)) {
+      note += t('list.sep') + t('llm.confidence', { p: Math.round(clamp(r.confidence, 0, 1) * 100) });
+    }
+    return note;
+  }
+
+  // 大模型调用出错时给人看的说明
+  function llmErrText(err) {
+    var code = err && err.code;
+    if (code === 'http') {
+      var hint = err.status === 401 || err.status === 403 ? t('llmErr.auth') : err.status === 404 ? t('llmErr.notFound') : err.status === 429 ? t('llmErr.rate') : '';
+      return t('llmErr.http', { status: err.status }) + (hint ? ' (' + hint + ')' : '') + (err.detail ? ': ' + err.detail : '');
+    }
+    if (code === 'timeout') return t('llmErr.timeout', { s: err.seconds });
+    if (code && I18n.has('llmErr.' + code)) return t('llmErr.' + code);
+    return code ? t('llmErr.failed') + ' (' + code + ')' : t('llmErr.failed');
+  }
+
+  // 自动生成的配置名（“默认”“模型 2”）按当前语言显示
+  function profileLabel(name) {
+    if (name === '默认') return t('llm.defaultName');
+    var m = /^模型 (\d+)$/.exec(name || '');
+    return m ? t('llm.newName', { n: +m[1] }) : name;
+  }
+
   // 同样的错误只提示一次
   function reportLLMError(r) {
-    var msg = r.setup
-      ? '还没设置好大模型，这一步由大师电脑代下（开局页面的「大模型设置」）'
-      : '大模型出错（' + r.error + '），这一步由大师电脑代下';
+    var msg = r.setup ? t('llm.toastSetup') : t('llm.toastError', { error: r.error });
     if (msg === llm.lastError) return;
     llm.lastError = msg;
     toast(msg, 'warn');
@@ -928,8 +995,8 @@
     $('llm-key').value = ep.apiKey;
     $('llm-model').value = ep.model;
     $('llm-url').placeholder = provider === 'jev' ? LLM.JEV_URL : 'https://api.deepseek.com/v1';
-    $('llm-model').placeholder = provider === 'jev' ? LLM.JEV_MODEL : '例如 deepseek-chat、gpt-4o-mini、qwen-plus';
-    $('llm-key').placeholder = provider === 'jev' ? 'TypeSafe 或 OpenRouter 的密钥' : 'sk-…（本地模型可留空）';
+    $('llm-model').placeholder = provider === 'jev' ? LLM.JEV_MODEL : t('llm.modelPlaceholder');
+    $('llm-key').placeholder = provider === 'jev' ? t('llm.keyPlaceholderJev') : t('llm.keyPlaceholder');
   }
 
   function keepEndpoint(provider) {
@@ -969,7 +1036,7 @@
 
   function renderProfileSelect() {
     $('llm-profile').innerHTML = llm.dcfg.profiles.map(function (p, i) {
-      return '<option value="' + i + '"' + (i === llm.didx ? ' selected' : '') + '>' + escapeHtml(LLM.profileName(p.name) || '（未命名）') + '</option>';
+      return '<option value="' + i + '"' + (i === llm.didx ? ' selected' : '') + '>' + escapeHtml(profileLabel(LLM.profileName(p.name)) || t('llm.unnamed')) + '</option>';
     }).join('');
     $('llm-profile-del').disabled = llm.dcfg.profiles.length < 2;
   }
@@ -994,7 +1061,10 @@
   function openLlmDialog(focusName) {
     llm.dcfg = withClaudeDefault(LLM.normalizeConfig(llm.cfg));
     // 记下原来的名字，改名后座位跟着改
-    llm.dcfg.profiles.forEach(function (p) { p.orig = p.name; });
+    llm.dcfg.profiles.forEach(function (p) {
+      p.orig = p.name;
+      if (profileLabel(p.name) !== p.name) p.name = profileLabel(p.name);
+    });
     var names = llm.dcfg.profiles.map(function (p) { return p.name; });
     llm.didx = Math.max(0, names.indexOf(focusName));
     $('llm-provider-claude-label').hidden = !inClaudePage();
@@ -1005,10 +1075,10 @@
   }
 
   function llmFormProblem(s) {
-    if (s.provider === 'claude') return llm.sample ? '' : '这个页面现在用不了 Claude';
+    if (s.provider === 'claude') return llm.sample ? '' : t('llm.errNoClaude');
     var ep = s[s.provider];
-    if (!/^https?:\/\/[^\s]+$/i.test(ep.baseUrl)) return '接口地址要以 http:// 或 https:// 开头';
-    if (!ep.model) return '请填写模型名';
+    if (!/^https?:\/\/[^\s]+$/i.test(ep.baseUrl)) return t('llm.errUrl');
+    if (!ep.model) return t('llm.errModel');
     return '';
   }
 
@@ -1052,16 +1122,16 @@
     $('llm-profile-name').addEventListener('input', function () {
       currentDraft().name = $('llm-profile-name').value;
       var opt = $('llm-profile').options[llm.didx];
-      if (opt) opt.textContent = LLM.profileName($('llm-profile-name').value) || '（未命名）';
+      if (opt) opt.textContent = LLM.profileName($('llm-profile-name').value) || t('llm.unnamed');
     });
     $('llm-profile-add').addEventListener('click', function () {
-      if (llm.dcfg.profiles.length >= 12) { setLlmStatus('最多 12 个配置', 'err'); return; }
+      if (llm.dcfg.profiles.length >= 12) { setLlmStatus(t('llm.errMax'), 'err'); return; }
       storeDraft();
       var used = llm.dcfg.profiles.map(function (p) { return LLM.profileName(p.name); });
       var n = llm.dcfg.profiles.length + 1;
-      while (used.indexOf('模型 ' + n) >= 0) n++;
+      while (used.indexOf(t('llm.newName', { n: n })) >= 0) n++;
       var d = LLM.normalizeSettings(null);
-      d.name = '模型 ' + n;
+      d.name = t('llm.newName', { n: n });
       llm.dcfg.profiles.push(d);
       llm.didx = llm.dcfg.profiles.length - 1;
       renderProfileSelect();
@@ -1085,7 +1155,7 @@
         var name = LLM.profileName(raw.name);
         var s = LLM.normalizeSettings(raw);
         var empty = s.provider === 'openai' && !s.openai.baseUrl && !s.openai.model;
-        var problem = !name ? '请给配置起个名字' : names[name] ? '配置名「' + name + '」重复了' : empty && llm.dcfg.profiles.length === 1 ? '' : llmFormProblem(s);
+        var problem = !name ? t('llm.errNoName') : names[name] ? t('llm.errDupName', { name: name }) : empty && llm.dcfg.profiles.length === 1 ? '' : llmFormProblem(s);
         if (problem) {
           if (i !== llm.didx) {
             llm.didx = i;
@@ -1109,7 +1179,7 @@
       save(STORE_LLM, llm.cfg);
       renameSeatModels(map);
       closeDialog('llm-dialog');
-      toast('已保存大模型设置');
+      toast(t('toast.llmSaved'));
       if (!$('setup').hidden) renderSetup();
       if (!$('lobby').hidden) renderLobby();
     });
@@ -1120,12 +1190,12 @@
       if (problem) { setLlmStatus(problem, 'err'); return; }
       var btn = $('llm-test');
       btn.disabled = true;
-      setLlmStatus('正在连接…', '');
+      setLlmStatus(t('llm.connecting'), '');
       LLM.ping(s, llmEnv(null)).then(function (r) {
-        setLlmStatus('连接成功，用时 ' + (r.ms / 1000).toFixed(1) + ' 秒' + (r.text ? '。模型回复：' + r.text : '') +
-          (r.thinking ? '。注意：这个模型开着深度思考，每步会比较慢' : ''), r.thinking ? '' : 'ok');
+        setLlmStatus(t('llm.ok', { s: (r.ms / 1000).toFixed(1) }) + (r.text ? t('llm.okReply', { text: r.text }) : '') +
+          (r.thinking ? t('llm.okThinking') : ''), r.thinking ? '' : 'ok');
       }, function (err) {
-        setLlmStatus((err && err.message) || '连接失败', 'err');
+        setLlmStatus(err ? llmErrText(err) : t('llm.fail'), 'err');
       }).then(function () { btn.disabled = false; });
     });
   }
@@ -1138,7 +1208,8 @@
     var mode = ['classic', 'trigon', 'gemblo', 'cube', 'prism'][demo.round++ % 5];
     demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.map(function (s, i) { return { seat: i }; })));
     demo.anim = null;
-    $('demo-label').textContent = '电脑演示局 · ' + MODE_LABEL[mode];
+    demo.mode = mode;
+    $('demo-label').textContent = t('demo.label', { mode: modeLabel(mode) });
   }
 
   function demoStep() {
@@ -1262,6 +1333,11 @@
     if (name !== 'game') {
       cancelAI();
       pauseReplay();
+      if (tour.steps) {
+        tour.steps = null;
+        game.touring = false;
+        closeDialog('tour');
+      }
     }
     if (name === 'setup') {
       renderSetup();
@@ -1299,6 +1375,7 @@
     saveGame();
     onTurnStart(true);
     renderGame();
+    maybeStartTour();
   }
 
   function prepareView(resetXray) {
@@ -1325,7 +1402,7 @@
     n = clamp(Math.round(n), 1, H);
     game.view.slice = n >= H ? null : n;
     $('layer-range').value = n;
-    $('layer-val').textContent = n >= H ? '全部' : '1–' + n + ' 层';
+    $('layer-val').textContent = n >= H ? t('cam.layerAll') : t('cam.layerRange', { n: n });
     drawBoard();
   }
 
@@ -1339,14 +1416,10 @@
     $('cam-ctl').hidden = !cube;
     $('board-wrap').classList.toggle('cube', cube);
     $('roll-btn').hidden = !isCube();
-    $('rot-ccw').title = cube ? '水平向左转（Shift+R）' : '逆时针旋转（E）';
-    $('rot-cw').title = cube ? '水平向右转（R / 滚轮）' : '顺时针旋转（R / 右键 / 滚轮）';
-    $('flip-btn').title = isCube() ? '向前翻（F）' : cube ? '上下翻转（F）' : '翻转（F）';
-    $('keys-help').textContent = cube
-      ? (isCube()
-        ? '点选棋子，指向一列后点击让它落下 · R 水平转 · F 前翻 · G 侧翻 · Q / E 转视角 · X 透视 · [ ] 切层 · 拖动空白处旋转视角'
-        : '点选棋子，指向一列后点击让它落下 · R 水平转 60° · F 上下翻转 · Q / E 转视角 · X 透视 · [ ] 切层 · 拖动空白处旋转视角')
-      : '点选棋子后移到棋盘上点击放置 · R 旋转 · F 翻转 · 方向键移动 · 回车放置 · Esc 取消';
+    $('rot-ccw').title = t(cube ? 'ctl.turnLeft' : 'ctl.rotLeft');
+    $('rot-cw').title = t(cube ? 'ctl.turnRight' : 'ctl.rotRight');
+    $('flip-btn').title = t(isCube() ? 'ctl.tipForward' : cube ? 'ctl.flipOver' : 'ctl.flip');
+    $('keys-help').textContent = t(cube ? (isCube() ? 'keys.cube' : 'keys.prism') : 'keys.flat');
   }
 
   function resetSelection() {
@@ -1400,10 +1473,10 @@
       }
       if (!first) {
         if (isOnlineGame()) {
-          toast('轮到你了（' + pl.label + '方）');
+          toast(t('turn.yours', { color: colorName(pl.color) }));
           sound('turn');
         } else if (humanCount() > 1) {
-          toast('轮到 ' + pl.name + '（' + pl.label + '方）');
+          toast(t('turn.named', { name: nameOf(pl), color: colorName(pl.color) }));
           sound('turn');
         }
       }
@@ -1414,7 +1487,7 @@
 
   function scheduleAI() {
     cancelAI();
-    if (game.paused || !isLocalAITurn()) return;
+    if (game.paused || game.touring || !isLocalAITurn()) return;
     var token = game.aiToken;
     var delay = SPEED_MS[prefs.speed] || SPEED_MS.normal;
     // 大师 / 大模型马上开始算，用时算进电脑速度里
@@ -1465,7 +1538,7 @@
     if (reason) return reason;
     if (note) {
       st.actions[st.actions.length - 1].note = note;
-      toast(st.players[p].name + '：' + note);
+      toast(nameOf(st.players[p]) + ': ' + note);
     }
     game.anim = { cells: cellsToIdx(st, st.lastMove.cells), player: p, t0: performance.now() };
     sound('place', byAI && humanCount() > 0);
@@ -1478,8 +1551,8 @@
     var notes = [];
     for (; game.eventCursor < st.events.length; game.eventCursor++) {
       var ev = st.events[game.eventCursor];
-      if (ev.type === 'blocked') notes.push(st.players[ev.player].name + ' 已无处可放');
-      else if (ev.type === 'resign') notes.push(st.players[ev.player].name + ' 停手了');
+      if (ev.type === 'blocked') notes.push(t('toast.blocked', { name: nameOf(st.players[ev.player]) }));
+      else if (ev.type === 'resign') notes.push(t('toast.stopped', { name: nameOf(st.players[ev.player]) }));
     }
     return notes;
   }
@@ -1488,7 +1561,7 @@
     var notes = processEvents();
     saveGame();
     onTurnStart(false);
-    if (notes.length) toast(notes.join('；'));
+    if (notes.length) toast(notes.join(t('list.sep')));
     renderGame();
     animate();
   }
@@ -1539,7 +1612,7 @@
           said = remote[j];
         }
       }
-      if (prefix && said && game.state.players[said.player]) toast(game.state.players[said.player].name + '：' + said.note);
+      if (prefix && said && game.state.players[said.player]) toast(nameOf(game.state.players[said.player]) + ': ' + said.note);
       if (prefix && placed && game.state.lastMove) {
         game.anim = { cells: cellsToIdx(game.state, game.state.lastMove.cells), player: game.state.lastMove.player, t0: performance.now() };
         sound('place', true);
@@ -1553,7 +1626,7 @@
     refreshMeta(g.config);
     var notes = processEvents();
     if (turnKeyOf() !== game.turnKey) onTurnStart(false);
-    if (notes.length) toast(notes.join('；'));
+    if (notes.length) toast(notes.join(t('list.sep')));
     renderGame();
     animate();
     maybeRunAI();
@@ -1571,7 +1644,7 @@
     online.pending = { at: at };
     var notes = processEvents();
     onTurnStart(false);
-    if (notes.length) toast(notes.join('；'));
+    if (notes.length) toast(notes.join(t('list.sep')));
     renderGame();
     animate();
     var session = online;
@@ -1582,7 +1655,7 @@
     }, function (err) {
       if (online !== session) return;
       online.pending = null;
-      toast(err.code === 'stale' ? '局面已更新，这步没有生效' : err.message, 'warn');
+      toast(err.code === 'stale' ? t('online.stale') : errText(err), 'warn');
       game.gameId = null;
       if (online.room && online.room.game) syncOnlineGame(online.room);
     });
@@ -1889,18 +1962,16 @@
 
   function reasonText(reason) {
     if (is3D()) {
-      if (reason === 'edge') return '不能和自己的棋子面贴面（包括叠在自己的棋子正上方）';
-      if (reason === 'corner') return '必须和自己的棋子棱或角相接';
-      if (reason === 'start') return '第一块必须盖住地面上你的起始角';
+      if (reason === 'edge' || reason === 'corner' || reason === 'start') return t('reason.' + reason + '3d');
     }
-    return REASON_TEXT[reason] || '这里放不下';
+    return I18n.has('reason.' + reason) ? t('reason.' + reason) : t('reason.default');
   }
 
   function tryPlace() {
     if (!canAct()) return false;
     var m = ghostMove();
     if (!m) {
-      toast(game.sel.piece < 0 ? '先选一块棋子' : '先在棋盘上选位置');
+      toast(t(game.sel.piece < 0 ? 'toast.pickPiece' : 'toast.pickSpot'));
       return false;
     }
     var reason = Engine.checkPlacement(game.state, game.state.current, m.piece, m.orient, m.x, m.y, m.z);
@@ -1934,7 +2005,7 @@
     game.hint = move;
     game.ghostByTap = false;
     game.hintLockCell = game.hover ? copyCell(game.hover) : null;
-    toast('试试「' + piece.name + '」放在虚线框的位置');
+    toast(t('toast.hint', { piece: pieceName(piece) }));
     renderDock();
     animate();
   }
@@ -1971,13 +2042,13 @@
     saveGame();
     onTurnStart(true);
     renderGame();
-    toast('已悔棋，轮到 ' + cur().name);
+    toast(t('toast.undone', { name: nameOf(cur()) }));
   }
 
   function resign() {
     if (!canAct()) return;
     var pl = cur();
-    confirmBox('确定停手？', pl.name + ' 将不再落子，手里的 ' + pl.remaining.filter(Boolean).length + ' 块留在手里。其他玩家继续对局。', '停手').then(function (ok) {
+    confirmBox(t('resign.title'), t('resign.text', { name: nameOf(pl), n: pl.remaining.filter(Boolean).length }), t('resign.yes')).then(function (ok) {
       if (!ok || !canAct() || cur() !== pl) return;
       resetSelection();
       if (isOnlineGame()) {
@@ -2084,38 +2155,39 @@
     if (replaying) {
       var last = replay.step ? replay.rec.actions[replay.step - 1] : null;
       if (st.over) {
-        text = '对局结束 · ' + winnersText(st);
+        text = t('turn.overWinner', { winner: winnersText(st) });
         color = 'var(--ink)';
       } else if (!last) {
-        text = '回放 · 开局';
+        text = t('turn.replayStart');
         color = 'var(--ink)';
       } else {
         var lp = st.players[last.player];
         color = colorVar(lp);
-        text = lp.name + (last.type === 'place' ? ' 放下「' + st.set.pieces[last.piece].name + '」' : ' 停手');
+        text = last.type === 'place' ? t('turn.placed', { name: nameOf(lp), piece: pieceName(st.set.pieces[last.piece]) }) : t('turn.stopped', { name: nameOf(lp) });
       }
     } else if (st.over) {
-      text = '对局结束';
+      text = t('turn.over');
       color = 'var(--ink)';
     } else {
       var pl = cur();
       color = colorVar(pl);
-      if (canAct()) text = !onlineMode && humanCount() > 1 ? '轮到 ' + pl.name + '（' + pl.label + '方）' : '轮到你了（' + pl.label + '方）';
+      var who = { name: nameOf(pl), color: colorName(pl.color) };
+      if (canAct()) text = t(!onlineMode && humanCount() > 1 ? 'turn.named' : 'turn.yours', who);
       else if (pl.type === 'human') {
-        text = '等待 ' + pl.name + '（' + pl.label + '方）落子' +
-          (onlineMode && !isPeerOnline(pl.owner) ? ' · 已离线' : remotePreview() ? ' · 正在尝试摆放' : '');
+        text = t('turn.waiting', who) +
+          (onlineMode && !isPeerOnline(pl.owner) ? t('turn.offline') : remotePreview() ? t('turn.trying') : '');
       }
-      else if (game.paused) text = pl.name + ' · 已暂停';
+      else if (game.paused) text = t('turn.paused', who);
       else if (pl.level === 'llm') {
         var secs = Math.floor((Date.now() - (game.turnStart || Date.now())) / 1000);
-        text = pl.name + ' 正在问大模型…' + (secs >= 2 ? ' ' + secs + ' 秒' : '');
-      } else text = pl.name + ' 思考中…';
+        text = t('turn.asking', who) + (secs >= 2 ? t('turn.seconds', { n: secs }) : '');
+      } else text = t('turn.thinking', who);
     }
     root.style.setProperty('--turn', color);
     $('turn-text').textContent = text;
     var placed = st.actions.filter(function (a) { return a.type === 'place'; }).length;
-    $('turn-move').textContent = replaying ? '第 ' + replay.step + ' / ' + replay.n + ' 步'
-      : st.over ? '共 ' + placed + ' 手' : '第 ' + (placed + 1) + ' 手';
+    $('turn-move').textContent = replaying ? t('move.step', { k: replay.step, n: replay.n })
+      : st.over ? t('move.total', { n: placed }) : t('move.nth', { n: placed + 1 });
 
     var hasHuman = myPlayers().length > 0;
     var canUndo = !onlineMode && st.actions.some(function (a) { return st.players[a.player].type === 'human'; });
@@ -2124,16 +2196,16 @@
     $('hint-btn').hidden = !hasHuman;
     $('hint-btn').disabled = !canAct();
     $('pause-btn').hidden = onlineMode || humanCount() > 0 || st.over || replaying;
-    $('pause-btn').textContent = game.paused ? '继续' : '暂停';
+    $('pause-btn').textContent = t(game.paused ? 'game.resume' : 'game.pause');
     $('result-btn').hidden = !st.over || replaying;
     $('sound-btn').setAttribute('aria-pressed', prefs.sound ? 'true' : 'false');
-    $('menu-btn').textContent = replaying ? '‹ 退出回放' : onlineMode ? '‹ 离开' : '‹ 菜单';
-    $('menu-btn').title = replaying ? '回到对局记录' : onlineMode ? '离开房间' : '返回菜单（对局自动保存）';
+    $('menu-btn').textContent = t(replaying ? 'game.exitReplay' : onlineMode ? 'game.leave' : 'game.menu');
+    $('menu-btn').title = t(replaying ? 'game.exitReplayTitle' : onlineMode ? 'game.leaveTitle' : 'game.menuTitle');
     var chip = $('room-chip');
     chip.hidden = !onlineMode;
     if (onlineMode) {
       var n = online.peers ? online.peers.length : null;
-      chip.textContent = '房间 ' + online.code + (online.connected ? (n ? ' · ' + n + ' 人在线' : '') : ' · 重新连接中');
+      chip.textContent = t('room.chip', { code: online.code }) + (online.connected ? (n ? t('room.online', { n: n }) : '') : t('room.reconnecting'));
       chip.classList.toggle('off', !online.connected);
     }
   }
@@ -2166,19 +2238,19 @@
     $('players').innerHTML = st.players.map(function (pl, p) {
       var current = replaying ? p === lastMover : !st.over && p === st.current;
       var stateText = '';
-      if (pl.resigned) stateText = '已停手';
-      else if (pl.done) stateText = st.over ? '' : '无处可放';
-      else if (current && !replaying) stateText = pl.type === 'human' ? (isMine(pl) ? '正在落子' : '等待落子') : (game.paused ? '已暂停' : '<span class="thinking">思考中</span>');
+      if (pl.resigned) stateText = th('card.stopped');
+      else if (pl.done) stateText = st.over ? '' : th('card.blocked');
+      else if (current && !replaying) stateText = pl.type === 'human' ? th(isMine(pl) ? 'card.placing' : 'card.waiting') : (game.paused ? th('card.paused') : '<span class="thinking">' + th('card.thinking') + '</span>');
       var dot = '';
       if (onlineMode && pl.type === 'human' && peersKnown()) {
         var on = isPeerOnline(pl.owner);
-        dot = '<span class="pcard-online' + (on ? '' : ' off') + '" title="' + (on ? '在线' : '离线') + '"></span>';
+        dot = '<span class="pcard-online' + (on ? '' : ' off') + '" title="' + th(on ? 'card.online' : 'card.offline') + '"></span>';
         if (!on && amHost && !pl.done && !st.over) {
-          stateText += '<button type="button" class="btn" data-takeover="' + p + '">交给电脑</button>';
+          stateText += '<button type="button" class="btn" data-takeover="' + p + '">' + th('card.takeover') + '</button>';
         }
       }
       var placed = total - pl.remainingSquares;
-      var kind = pl.type === 'human' ? (onlineMode && pl.owner === myId() ? '你' : '玩家') : '电脑 · ' + LEVEL_LABEL[pl.level] + (pl.level === 'llm' && pl.model ? ' · ' + pl.model : '');
+      var kind = pl.type === 'human' ? t(onlineMode && pl.owner === myId() ? 'card.you' : 'card.player') : t('card.ai', { level: levelLabel(pl.level) }) + (pl.level === 'llm' && pl.model ? ' · ' + profileLabel(pl.model) : '');
       var pieces = order.map(function (pi) {
         return '<i' + (pl.remaining[pi] ? '' : ' class="used"') + '>' + pieceIcon(st.set, pi) + '</i>';
       }).join('');
@@ -2186,10 +2258,10 @@
       var note = lastNote(st, p);
       return '<div class="pcard' + (current ? ' current' : '') + (pl.done ? ' done' : '') + (viewing === pl ? ' viewing' : '') +
         '" style="--c:' + colorVar(pl) + '" data-player="' + p + '" role="button" tabindex="0"' +
-        ' title="点击在托盘里查看剩余棋子" aria-label="' + escapeHtml(pl.name) + '，剩 ' + left + ' 块，点击查看">' +
+        ' title="' + th('card.title') + '" aria-label="' + th('card.aria', { name: nameOf(pl), n: left }) + '">' +
         '<span class="pcard-swatch" aria-hidden="true"></span>' +
-        '<div class="pcard-name">' + dot + escapeHtml(pl.name) + '<small>' + pl.label + '方 · ' + kind + '</small></div>' +
-        '<div class="pcard-left" title="手里还剩 ' + left + ' 块">剩<b>' + left + '</b>块</div>' +
+        '<div class="pcard-name">' + dot + escapeHtml(nameOf(pl)) + '<small>' + th('card.sub', { color: colorName(pl.color), kind: kind }) + '</small></div>' +
+        '<div class="pcard-left" title="' + th('card.leftTitle', { n: left }) + '">' + th('card.leftHtml', { n: left }) + '</div>' +
         '<div class="pcard-bar" aria-hidden="true"><i style="--w:' + (placed / total * 100).toFixed(1) + '%"></i></div>' +
         '<div class="pcard-pieces" aria-hidden="true">' + pieces + '</div>' +
         '<div class="pcard-state">' + stateText + '</div>' +
@@ -2212,7 +2284,7 @@
       b.id = 'piece-' + piece.id;
       b.dataset.piece = pi;
       b.setAttribute('role', 'option');
-      b.setAttribute('aria-label', piece.name + '，' + piece.size + ' 格');
+      b.setAttribute('aria-label', t('piece.aria', { piece: pieceName(piece), n: piece.size }));
       b.innerHTML = set.dims === 3 ? View3D.pieceSVG(piece.orients[piece.display], null, null, set.kind) : pieceSVG(piece.orients[piece.display], set.maxBox);
       b.addEventListener('click', function () { selectPiece(pi); });
       tray.appendChild(b);
@@ -2239,9 +2311,9 @@
     if (replaying) {
       $('dock').classList.remove('inactive');
       $('dock').style.setProperty('--c', 'var(--ink)');
-      $('dock-title').textContent = '对局回放 · ' + MODE_LABEL[st.mode];
+      $('dock-title').textContent = t('dock.replay', { mode: modeLabel(st.mode) });
       $('dock-back').hidden = true;
-      $('dock-count').textContent = '共 ' + replay.n + ' 步';
+      $('dock-count').textContent = t('dock.steps', { n: replay.n });
       $('resign-btn').hidden = true;
       renderReplayControls();
       return;
@@ -2252,10 +2324,11 @@
     var dock = $('dock');
     dock.classList.toggle('inactive', !active);
     dock.style.setProperty('--c', colorVar(owner));
-    $('dock-title').textContent = owner.label + '方 · ' + owner.name + (browsing ? ' 的棋子' : active || st.over ? '' : owner.type === 'ai' ? '（电脑）' : '（等待中）');
+    var ownerText = { color: colorName(owner.color), name: nameOf(owner) };
+    $('dock-title').textContent = t(browsing ? 'dock.browsing' : active || st.over ? 'dock.owner' : owner.type === 'ai' ? 'dock.ai' : 'dock.waiting', ownerText);
     $('dock-back').hidden = !browsing;
     var left = owner.remaining.filter(Boolean).length;
-    $('dock-count').textContent = '剩 ' + left + ' 块 · ' + owner.remainingSquares + ' 格';
+    $('dock-count').textContent = t('dock.count', { n: left, cells: owner.remainingSquares });
     var set = st.set;
     $('tray').querySelectorAll('.piece-btn').forEach(function (b) {
       var pi = +b.dataset.piece;
@@ -2266,7 +2339,7 @@
       b.disabled = used || !active;
       b.setAttribute('aria-selected', active && game.sel.piece === pi ? 'true' : 'false');
       var piece = set.pieces[pi];
-      b.title = used ? '已放置' : stuck ? piece.name + '：当前没有可放的位置' : piece.name + '（' + piece.size + ' 格）';
+      b.title = used ? t('piece.used') : stuck ? t('piece.stuck', { piece: pieceName(piece) }) : t('piece.title', { piece: pieceName(piece), n: piece.size });
     });
     $('resign-btn').hidden = !active;
     renderSelection();
@@ -2280,9 +2353,9 @@
       var set = game.state.set;
       var o = set.pieces[game.sel.piece].orients[currentOrient()];
       prev.innerHTML = set.dims === 3 ? View3D.pieceSVG(o, game.view && game.view.cam, null, set.kind) : pieceSVG(o, set.maxBox);
-      prev.setAttribute('aria-label', '已选：' + set.pieces[game.sel.piece].name);
+      prev.setAttribute('aria-label', t('sel.aria', { piece: pieceName(set.pieces[game.sel.piece]) }));
     } else {
-      prev.textContent = active ? '从下方选择棋子' : game.state.over ? '对局结束' : '等待其他玩家';
+      prev.textContent = t(active ? 'sel.pick' : game.state.over ? 'sel.over' : 'sel.wait');
       prev.removeAttribute('aria-label');
     }
     ['rot-ccw', 'rot-cw', 'flip-btn', 'roll-btn'].forEach(function (id) { $(id).disabled = !has; });
@@ -2321,7 +2394,7 @@
     else d.removeAttribute('open');
   }
   function anyDialogOpen() {
-    return ['end-dialog', 'confirm-dialog', 'rules-dialog', 'llm-dialog', 'records-dialog'].some(function (id) { return $(id).open; });
+    return ['end-dialog', 'confirm-dialog', 'rules-dialog', 'llm-dialog', 'records-dialog', 'tour'].some(function (id) { return $(id).open; });
   }
 
   var confirmResolve = null;
@@ -2329,7 +2402,7 @@
     if (confirmResolve) finishConfirm(false);
     $('confirm-title').textContent = title;
     $('confirm-text').textContent = text;
-    $('confirm-yes').textContent = yesLabel || '确定';
+    $('confirm-yes').textContent = yesLabel || t('confirm.ok');
     openDialog('confirm-dialog');
     return new Promise(function (resolve) { confirmResolve = resolve; });
   }
@@ -2347,30 +2420,26 @@
     var title;
     if (mine.length === 1 && (isOnlineGame() || humanCount() === 1)) {
       var me = mine[0];
-      title = me.rank === 1 ? (winners.length > 1 ? '并列第一！' : '你赢了！') : '你获得第 ' + me.rank + ' 名';
+      title = me.rank === 1 ? t(winners.length > 1 ? 'end.tieFirst' : 'end.youWin') : t('end.yourRank', { n: me.rank });
     } else {
-      title = winners.length > 1
-        ? winners.map(function (r) { return r.player.name; }).join('、') + ' 并列第一'
-        : winners[0].player.name + ' 获胜';
+      title = winnersText(st);
     }
     $('end-title').textContent = title;
-    $('end-note').textContent = st.players[0].noBonus
-      ? '名次按手里剩下的格子数排，剩得越少越靠前。'
-      : '名次按手里剩下的格子数排，剩得越少越靠前；全部放完的排最前，最后一块是单格的更靠前。';
+    $('end-note').textContent = t(st.players[0].noBonus ? 'end.noteNoBonus' : 'end.noteBonus');
     $('end-rows').innerHTML = rows.map(function (r) {
-      var tag = r.monoLast ? '全部放完，单格收尾' : r.allPlaced ? '全部放完' : r.player.resigned ? '中途停手' : '';
+      var tag = r.monoLast ? 'end.tagMono' : r.allPlaced ? 'end.tagAll' : r.player.resigned ? 'end.tagStopped' : '';
       return '<tr>' +
         '<td><span class="rank' + (r.rank === 1 ? ' first' : '') + '">' + r.rank + '</span></td>' +
-        '<td><span class="who" style="--c:' + colorVar(r.player) + '"><i></i><span>' + escapeHtml(r.player.name) +
-        (tag ? '<span class="bonus">' + tag + '</span>' : '') + '</span></span></td>' +
-        '<td class="num left">' + r.piecesLeft + ' 块<small>' + r.remainingSquares + ' 格</small></td>' +
+        '<td><span class="who" style="--c:' + colorVar(r.player) + '"><i></i><span>' + escapeHtml(nameOf(r.player)) +
+        (tag ? '<span class="bonus">' + th(tag) + '</span>' : '') + '</span></span></td>' +
+        '<td class="num left">' + th('end.pieces', { n: r.piecesLeft }) + '<small>' + th('end.cells', { n: r.remainingSquares }) + '</small></td>' +
         '</tr>';
     }).join('');
     var onlineMode = isOnlineGame();
     var amHost = onlineMode && online.room && online.room.host === myId();
     $('end-again').disabled = onlineMode && !amHost;
-    $('end-again').textContent = onlineMode && !amHost ? '等待房主再开' : '再来一局';
-    $('end-menu').textContent = onlineMode ? '离开房间' : '返回菜单';
+    $('end-again').textContent = t(onlineMode && !amHost ? 'end.waitHost' : 'end.again');
+    $('end-menu').textContent = t(onlineMode ? 'end.leaveRoom' : 'end.menu');
     $('end-record-note').textContent = '';
     renderRecordButtons();
     renderGame();
@@ -2384,8 +2453,8 @@
   var REPLAY_MS = 900;
 
   function winnersText(st) {
-    var w = Engine.standings(st).filter(function (r) { return r.rank === 1; }).map(function (r) { return r.player.name; });
-    return w.length > 1 ? w.join('、') + ' 并列第一' : w[0] + ' 获胜';
+    var w = Engine.standings(st).filter(function (r) { return r.rank === 1; }).map(function (r) { return nameOf(r.player); });
+    return w.length > 1 ? t('end.tied', { names: joinNames(w) }) : t('end.winner', { name: w[0] });
   }
 
   function loadRecords() {
@@ -2426,7 +2495,7 @@
 
   function renderRecordButtons() {
     $('end-save').disabled = !!game.recordSaved;
-    $('end-save').textContent = game.recordSaved ? '已保存到本机' : '保存到本机';
+    $('end-save').textContent = t(game.recordSaved ? 'record.saved' : 'record.save');
   }
 
   function two(n) { return (n < 10 ? '0' : '') + n; }
@@ -2439,7 +2508,7 @@
   // 文件名只用 ASCII：有的浏览器会把中文文件名换成 download
   function recordFileName(rec) {
     var d = new Date(rec.date);
-    return 'blokus-' + rec.mode + '-' + d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) +
+    return 'blockturf-' + rec.mode + '-' + d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) +
       '-' + two(d.getHours()) + two(d.getMinutes()) + '.json';
   }
 
@@ -2474,7 +2543,15 @@
   function exportRecord(rec) {
     if (!rec) return Promise.resolve('failed');
     var name = recordFileName(rec);
-    var text = Record.stringify(rec);
+    // 导出文件里可读的流程用当前语言
+    var text = Record.stringify(rec, {
+      app: t('app.title'),
+      seat: function (pl) { return t('record.seat', { color: colorName(pl.color), name: nameOf(pl) }); },
+      piece: pieceName,
+      blocked: t('record.blocked'),
+      stopped: t('record.stopped'),
+      over: t('record.over')
+    });
     return downloadsCap().then(function (dl) {
       if (!dl) return browserDownload(name, text) ? 'saved' : 'failed';
       return dl.save({ filename: name, data: text }).then(function () { return 'saved'; }, function (err) {
@@ -2484,7 +2561,7 @@
   }
 
   function exportText(result) {
-    return result === 'saved' ? '已导出对局记录文件' : result === 'declined' ? '' : '导出失败：这里不能下载文件';
+    return result === 'saved' ? t('record.exported') : result === 'declined' ? '' : t('record.exportFail');
   }
 
   /* ---------- 记录列表 ---------- */
@@ -2497,48 +2574,49 @@
   function renderRecords(msg) {
     var list = loadRecords();
     $('records-list').innerHTML = list.length ? list.map(recordItem).join('')
-      : '<li class="records-empty">还没有保存的对局。对局结束时可以在结果窗口里「保存到本机」，也可以导入以前导出的文件。</li>';
+      : '<li class="records-empty">' + th('records.empty') + '</li>';
     var note = $('records-note');
     note.textContent = msg || '';
     note.hidden = !msg;
   }
 
   function recordItem(rec) {
-    var s = Record.summary(rec);
-    var who = s.players.map(function (pl) {
-      return '<span class="who" style="--c:var(--p-' + pl.color + ')"><i></i><span>' + escapeHtml(pl.name) + '</span></span>';
+    var st = Record.stateAt(rec);
+    var moves = st.actions.filter(function (a) { return a.type === 'place'; }).length;
+    var who = st.players.map(function (pl) {
+      return '<span class="who" style="--c:' + colorVar(pl) + '"><i></i><span>' + escapeHtml(nameOf(pl)) + '</span></span>';
     }).join('');
-    var status = !s.over ? '未下完' : s.winners.length > 1 ? s.winners.join('、') + ' 并列第一' : s.winners[0] + ' 获胜';
+    var status = st.over ? winnersText(st) : t('records.unfinished');
     return '<li class="record-item">' +
       '<div class="record-main">' +
-      '<div class="record-head"><b>' + escapeHtml(MODE_LABEL[rec.mode]) + '</b><span>' + fmtDate(rec.date) + (rec.online ? ' · 联机' : '') + '</span></div>' +
+      '<div class="record-head"><b>' + escapeHtml(modeLabel(rec.mode)) + '</b><span>' + fmtDate(rec.date) + (rec.online ? th('records.online') : '') + '</span></div>' +
       '<div class="record-who">' + who + '</div>' +
-      '<small>' + s.moves + ' 手 · ' + escapeHtml(status) + '</small>' +
+      '<small>' + th('move.total', { n: moves }) + ' · ' + escapeHtml(status) + '</small>' +
       '</div>' +
       '<div class="record-btns">' +
-      '<button type="button" class="btn small primary" data-replay="' + rec.id + '">回放</button>' +
-      '<button type="button" class="btn small" data-export="' + rec.id + '">导出</button>' +
-      '<button type="button" class="btn small ghost" data-delete="' + rec.id + '">删除</button>' +
+      '<button type="button" class="btn small primary" data-replay="' + rec.id + '">' + th('records.replay') + '</button>' +
+      '<button type="button" class="btn small" data-export="' + rec.id + '">' + th('records.export') + '</button>' +
+      '<button type="button" class="btn small ghost" data-delete="' + rec.id + '">' + th('records.delete') + '</button>' +
       '</div></li>';
   }
 
   function importRecordFile(file) {
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) { renderRecords('文件太大，不是对局记录'); return; }
+    if (file.size > 4 * 1024 * 1024) { renderRecords(t('records.tooBig')); return; }
     var reader = new FileReader();
     reader.onload = function () {
       var rec = null;
       try { rec = Record.parse(JSON.parse(String(reader.result))); } catch (e) { rec = null; }
-      if (!rec) { renderRecords('无法读取：这不是角斗士棋导出的对局记录文件'); return; }
+      if (!rec) { renderRecords(t('records.bad')); return; }
       if (addRecord(rec)) {
-        renderRecords('已导入：' + MODE_LABEL[rec.mode] + '，' + fmtDate(rec.date));
+        renderRecords(t('records.imported', { mode: modeLabel(rec.mode), date: fmtDate(rec.date) }));
         return;
       }
       closeDialog('records-dialog');
       enterReplay(rec);
-      toast('浏览器存储不可用，记录没有保存，直接回放', 'warn');
+      toast(t('records.noStore'), 'warn');
     };
-    reader.onerror = function () { renderRecords('读取文件失败'); };
+    reader.onerror = function () { renderRecords(t('records.readFail')); };
     reader.readAsText(file);
   }
 
@@ -2647,13 +2725,13 @@
   function buildReplayMoves() {
     var st = game.state;
     var set = st.set;
-    var items = ['<li><button type="button" data-step="0" style="--c:var(--line)"><span class="rp-n">0</span><i aria-hidden="true"></i><span class="rp-who">开局</span></button></li>'];
+    var items = ['<li><button type="button" data-step="0" style="--c:var(--line)"><span class="rp-n">0</span><i aria-hidden="true"></i><span class="rp-who">' + th('rp.start') + '</span></button></li>'];
     replay.rec.actions.forEach(function (a, i) {
       var pl = st.players[a.player];
-      var what = a.type === 'place' ? set.pieces[a.piece].name : '停手';
+      var what = a.type === 'place' ? pieceName(set.pieces[a.piece]) : t('rp.stopped');
       items.push('<li><button type="button" data-step="' + (i + 1) + '" style="--c:' + colorVar(pl) + '">' +
         '<span class="rp-n">' + (i + 1) + '</span><i aria-hidden="true"></i>' +
-        '<span class="rp-who">' + escapeHtml(pl.name) + '</span><span class="rp-what">' + escapeHtml(what) + '</span>' +
+        '<span class="rp-who">' + escapeHtml(nameOf(pl)) + '</span><span class="rp-what">' + escapeHtml(what) + '</span>' +
         (a.note ? '<span class="rp-note">' + escapeHtml(a.note) + '</span>' : '') +
         '</button></li>');
     });
@@ -2670,7 +2748,7 @@
     $('rp-prev').disabled = k === 0;
     $('rp-next').disabled = k >= replay.n;
     $('rp-last').disabled = k >= replay.n;
-    $('rp-play').textContent = replay.playing ? '暂停' : k >= replay.n ? '从头播放' : '播放';
+    $('rp-play').textContent = t(replay.playing ? 'rp.pause' : k >= replay.n ? 'rp.restart' : 'rp.play');
     var list = $('rp-moves');
     var old = list.querySelector('[aria-current]');
     if (old) old.removeAttribute('aria-current');
@@ -2682,6 +2760,299 @@
     var top = li.offsetTop, bottom = top + li.offsetHeight;
     if (top < list.scrollTop) list.scrollTop = top;
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }
+
+  /* ================= 界面语言 ================= */
+
+  // 没选过语言时按浏览器语言自动选择（都不支持就用英文）
+  function initLang() {
+    var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+    I18n.setLang(prefs.lang || I18n.detect(langs));
+  }
+
+  function applyI18n() {
+    document.documentElement.lang = I18n.lang();
+    document.title = t('app.title');
+    var meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', t('app.description'));
+    document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t(el.getAttribute('data-i18n')); });
+    document.querySelectorAll('[data-i18n-html]').forEach(function (el) { el.innerHTML = t(el.getAttribute('data-i18n-html')); });
+    document.querySelectorAll('[data-i18n-attr]').forEach(function (el) {
+      el.getAttribute('data-i18n-attr').split(';').forEach(function (pair) {
+        var i = pair.indexOf(':');
+        el.setAttribute(pair.slice(0, i).trim(), t(pair.slice(i + 1).trim()));
+      });
+    });
+    renderLogo();
+    $('lang-select').innerHTML = I18n.LANGS.map(function (l) {
+      return '<option value="' + l.code + '" lang="' + l.code + '"' + (l.code === I18n.lang() ? ' selected' : '') + '>' + escapeHtml(l.name) + '</option>';
+    }).join('');
+  }
+
+  // 标题字：中日韩逐字上色，其他语言逐词上色（BlockTurf 拆成 Block / Turf）
+  function renderLogo() {
+    var title = t('app.title');
+    var cjk = /^[぀-ヿ㐀-鿿가-힯]+$/.test(title);
+    var parts = cjk ? Array.from(title) : title.split(/\s+|(?=[A-Z])/).filter(Boolean);
+    var colors = ['blue', 'yellow', 'red', 'green'];
+    var el = $('logo');
+    el.setAttribute('aria-label', title);
+    el.classList.toggle('words', !cjk);
+    el.innerHTML = parts.map(function (part, i) {
+      return '<span class="logo-ch" style="--c: var(--p-' + colors[i % colors.length] + ')">' + escapeHtml(part) + '</span>';
+    }).join('');
+  }
+
+  function setLanguage(code) {
+    prefs.lang = I18n.setLang(code);
+    savePrefs();
+    applyI18n();
+    if (!$('setup').hidden) {
+      renderSetup();
+      if (demo.mode) $('demo-label').textContent = t('demo.label', { mode: modeLabel(demo.mode) });
+    }
+    if (!$('lobby').hidden) renderLobby();
+    if (game.state && !$('game').hidden) {
+      buildTray();
+      applyModeControls();
+      if (isReplay()) buildReplayMoves();
+      renderGame();
+    }
+  }
+
+  /* ================= 新手引导 ================= */
+
+  // 每种棋盘第一次进入对局时弹出；看完或跳过后记在本机，顶栏的 ? 可以再看
+  var TOUR_FAMILY = { classic: 'square', duo: 'square', trigon: 'trigon', gemblo: 'gemblo', cube: 'cube', prism: 'prism' };
+  var tour = { steps: null, i: 0, mode: null };
+
+  function toursSeen() {
+    var s = load(STORE_TOURS);
+    return s && typeof s === 'object' ? s : {};
+  }
+
+  function tourSteps(mode) {
+    var fam = TOUR_FAMILY[mode];
+    var flat = fam !== 'cube' && fam !== 'prism';
+    var touch = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    return [
+      { target: 'board-wrap', title: 'tour.goalTitle', body: 'tour.goal.' + fam },
+      { target: 'board-wrap', title: 'tour.startTitle', body: 'tour.start.' + mode },
+      { title: 'tour.ruleTitle', body: 'tour.rule.' + fam, diagram: fam },
+      { target: 'dock', title: 'tour.controlsTitle', body: flat ? 'tour.controls.flat' : 'tour.controls.3d', extra: touch ? 'tour.controls.touch' : null },
+      { target: 'players', title: 'tour.playersTitle', body: 'tour.players' },
+      { target: 'help-btn', title: 'tour.helpTitle', body: 'tour.help' }
+    ];
+  }
+
+  function maybeStartTour() {
+    if (!game.state || isReplay() || toursSeen()[game.state.mode]) return;
+    startTour(game.state.mode);
+  }
+
+  function startTour(mode) {
+    if (tour.steps) return;
+    tour.mode = mode;
+    tour.steps = tourSteps(mode);
+    tour.i = 0;
+    // 本地电脑等引导结束再走
+    game.touring = true;
+    cancelAI();
+    var me = myPlayers()[0] || cur();
+    $('tour').style.setProperty('--tc', colorVar(me));
+    openDialog('tour');
+    showTourStep();
+  }
+
+  function endTour() {
+    if (!tour.steps) return;
+    var seen = toursSeen();
+    seen[tour.mode] = 1;
+    save(STORE_TOURS, seen);
+    tour.steps = null;
+    game.touring = false;
+    closeDialog('tour');
+    if (isLocalAITurn()) scheduleAI();
+    renderGame();
+  }
+
+  function tourGo(d) {
+    if (!tour.steps) return;
+    var i = tour.i + d;
+    if (i >= tour.steps.length) { endTour(); return; }
+    tour.i = clamp(i, 0, tour.steps.length - 1);
+    showTourStep();
+  }
+
+  function showTourStep() {
+    var step = tour.steps[tour.i];
+    var n = tour.steps.length;
+    $('tour-step').textContent = t('tour.step', { k: tour.i + 1, n: n });
+    $('tour-title').textContent = t(step.title);
+    $('tour-body').innerHTML = '<p>' + t(step.body) + '</p>' +
+      (step.extra ? '<p class="tour-extra">' + t(step.extra) + '</p>' : '') +
+      (step.diagram ? tourDiagram(step.diagram) : '');
+    $('tour-back').disabled = tour.i === 0;
+    $('tour-next').textContent = t(tour.i === n - 1 ? 'tour.done' : 'tour.next');
+    placeTour();
+    try { $('tour-next').focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
+  }
+
+  // 聚光框圈住要讲的界面，卡片放在旁边放得下的一侧；放不下时贴在底部
+  function placeTour() {
+    if (!tour.steps) return;
+    var step = tour.steps[tour.i];
+    var spot = $('tour-spot'), card = $('tour-card');
+    var target = step.target ? $(step.target) : null;
+    if (target && target.offsetParent) {
+      var r0 = target.getBoundingClientRect();
+      if (r0.top < 0 || r0.bottom > window.innerHeight) target.scrollIntoView({ block: r0.height > window.innerHeight * 0.6 ? 'start' : 'center' });
+    }
+    var r = target && target.offsetParent ? target.getBoundingClientRect() : null;
+    $('tour').classList.toggle('dim', !r);
+    spot.hidden = !r;
+    var vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    var w = card.offsetWidth, h = card.offsetHeight, gap = 14, m = 12;
+    var x = (vw - w) / 2, y = (vh - h) / 2;
+    if (r) {
+      var pad = 6;
+      spot.style.left = (r.left - pad) + 'px';
+      spot.style.top = (r.top - pad) + 'px';
+      spot.style.width = (r.width + pad * 2) + 'px';
+      spot.style.height = (r.height + pad * 2) + 'px';
+      var midY = clamp(r.top + r.height / 2 - h / 2, m, vh - h - m);
+      var midX = clamp(r.left + r.width / 2 - w / 2, m, vw - w - m);
+      if (r.right + gap + w <= vw - m) { x = r.right + gap; y = midY; }
+      else if (r.left - gap - w >= m) { x = r.left - gap - w; y = midY; }
+      else if (r.bottom + gap + h <= vh - m) { x = midX; y = r.bottom + gap; }
+      else if (r.top - gap - h >= m) { x = midX; y = r.top - gap - h; }
+      else { x = midX; y = vh - h - m; }
+    }
+    card.style.left = Math.max(m, x) + 'px';
+    card.style.top = Math.max(m, y) + 'px';
+  }
+
+  /* ---------- 规则示意图 ---------- */
+
+  function fmtPoints(pts) {
+    return pts.map(function (p) { return p[0].toFixed(3) + ',' + p[1].toFixed(3); }).join(' ');
+  }
+
+  function dgFigure(svg, ok, captionKey) {
+    return '<figure class="tour-dg ' + (ok ? 'ok' : 'bad') + '">' + svg +
+      '<figcaption><b aria-hidden="true">' + (ok ? '✓' : '✗') + '</b> ' + th(captionKey) + '</figcaption></figure>';
+  }
+
+  // 平面示意：cells 为 [x, y, 类别]，类别 own / new / other；mark 是接触点
+  function dgFlat(geom, cells, mark, ok) {
+    var has = {};
+    cells.forEach(function (c) { has[c[0] + ',' + c[1]] = c[2]; });
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    var cx0 = Infinity, cx1 = -Infinity, cy0 = Infinity, cy1 = -Infinity;
+    cells.forEach(function (c) {
+      geom.cellPoly(c[0], c[1]).forEach(function (p) {
+        minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+        minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+      });
+      cx0 = Math.min(cx0, c[0]); cx1 = Math.max(cx1, c[0]); cy0 = Math.min(cy0, c[1]); cy1 = Math.max(cy1, c[1]);
+    });
+    var padV = 0.45;
+    var out = '';
+    // 周围的空格子当作棋盘底纹
+    for (var x = cx0 - 2; x <= cx1 + 2; x++) {
+      for (var y = cy0 - 2; y <= cy1 + 2; y++) {
+        var poly = geom.cellPoly(x, y);
+        var cen = geom.centroid(x, y);
+        if (cen[0] < minX - padV || cen[0] > maxX + padV || cen[1] < minY - padV || cen[1] > maxY + padV) continue;
+        var kind = has[x + ',' + y] || 'empty';
+        out += '<polygon points="' + fmtPoints(poly) + '" class="dg-' + kind + '"/>';
+      }
+    }
+    out += '<circle cx="' + mark[0].toFixed(3) + '" cy="' + mark[1].toFixed(3) + '" r="0.2" class="dg-mark"/>';
+    var vb = [minX - padV, minY - padV, maxX - minX + padV * 2, maxY - minY + padV * 2];
+    return '<svg viewBox="' + vb.map(function (v) { return v.toFixed(3); }).join(' ') + '" aria-hidden="true">' + out + '</svg>';
+  }
+
+  // 立体示意：cells 为 [x, 层, z, 类别]；floor(x, z) 给出这一格在地面上的多边形
+  function dgSolid(floor, layerH, cells, mark, ok) {
+    var C = Math.cos(Math.PI / 6), S = Math.sin(Math.PI / 6);
+    function proj(px, py, pz) { return [(px - pz) * C, (px + pz) * S - py * layerH]; }
+    var faces = [];
+    // 地面格子当底纹，看得出棋子是并排放在地上
+    var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    cells.forEach(function (c) { x0 = Math.min(x0, c[0]); x1 = Math.max(x1, c[0]); z0 = Math.min(z0, c[2]); z1 = Math.max(z1, c[2]); });
+    for (var fx = x0; fx <= x1; fx++) {
+      for (var fz = z0; fz <= z1; fz++) {
+        faces.push({ pts: floor(fx, fz).map(function (p) { return proj(p[0], 0, p[1]); }), kind: 'empty', shade: 'floor' });
+      }
+    }
+    cells.slice().sort(function (a, b) {
+      var ca = floor(a[0], a[2]), cb = floor(b[0], b[2]);
+      function depth(poly) { return poly.reduce(function (s, p) { return s + p[0] + p[1]; }, 0) / poly.length; }
+      return a[1] - b[1] || depth(ca) - depth(cb);
+    }).forEach(function (c) {
+      var poly = floor(c[0], c[2]);
+      var mx = 0, mz = 0;
+      poly.forEach(function (p) { mx += p[0] / poly.length; mz += p[1] / poly.length; });
+      var y0 = c[1], y1 = c[1] + 1;
+      for (var k = 0; k < poly.length; k++) {
+        var a = poly[k], b = poly[(k + 1) % poly.length];
+        var nx = b[1] - a[1], nz = -(b[0] - a[0]);
+        if (nx * ((a[0] + b[0]) / 2 - mx) + nz * ((a[1] + b[1]) / 2 - mz) < 0) { nx = -nx; nz = -nz; }
+        if (nx + nz <= 1e-9) continue;
+        var shade = nx > nz ? 'r' : 'l';
+        faces.push({ pts: [proj(a[0], y0, a[1]), proj(b[0], y0, b[1]), proj(b[0], y1, b[1]), proj(a[0], y1, a[1])], kind: c[3], shade: shade });
+      }
+      faces.push({ pts: poly.map(function (p) { return proj(p[0], y1, p[1]); }), kind: c[3], shade: 't' });
+    });
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    var out = '';
+    faces.forEach(function (f) {
+      f.pts.forEach(function (p) {
+        minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+        minY = Math.min(minY, p[1]); maxY = Math.max(maxY, p[1]);
+      });
+      out += '<polygon points="' + fmtPoints(f.pts) + '" class="dg-' + f.kind + (f.shade === 'floor' ? '' : ' dg-face-' + f.shade) + '"/>';
+    });
+    var mp = proj(mark[0], mark[1], mark[2]);
+    out += '<circle cx="' + mp[0].toFixed(3) + '" cy="' + mp[1].toFixed(3) + '" r="0.2" class="dg-mark"/>';
+    var pad = 0.4;
+    var vb = [minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2];
+    return '<svg viewBox="' + vb.map(function (v) { return v.toFixed(3); }).join(' ') + '" aria-hidden="true">' + out + '</svg>';
+  }
+
+  function tourDiagram(fam) {
+    var G = Pieces.GEOMETRY;
+    var H = Pieces.H;
+    var figs = [];
+    if (fam === 'square') {
+      var own = [[0, 0, 'own'], [0, 1, 'own'], [1, 1, 'own']];
+      figs.push(dgFigure(dgFlat(G.square, own.concat([[2, 2, 'new'], [2, 3, 'new'], [3, 2, 'new']]), [2, 2], true), true, 'tour.dg.corner'));
+      figs.push(dgFigure(dgFlat(G.square, own.concat([[2, 1, 'new'], [3, 1, 'new'], [3, 0, 'new']]), [2, 1.5], false), false, 'tour.dg.side'));
+    } else if (fam === 'trigon') {
+      var tOwn = [[0, 0, 'own'], [1, 0, 'own']];
+      figs.push(dgFigure(dgFlat(G.tri, tOwn.concat([[3, 0, 'new'], [4, 0, 'new']]), [1.5, 0], true), true, 'tour.dg.corner'));
+      figs.push(dgFigure(dgFlat(G.tri, tOwn.concat([[2, 0, 'new'], [3, 0, 'new']]), [1.25, 0.5 * H], false), false, 'tour.dg.side'));
+    } else if (fam === 'gemblo') {
+      var hOwn = [[0, 0, 'own'], [0, 1, 'own']];
+      var gap = [H / 2, 1.75];
+      figs.push(dgFigure(dgFlat(G.hex, hOwn.concat([[1, 2, 'new'], [1, 3, 'new']]), gap, true), true, 'tour.dg.apex'));
+      figs.push(dgFigure(dgFlat(G.hex, hOwn.concat([[1, 1, 'new'], [1, 2, 'new']]), [H / 2, 1.25], false), false, 'tour.dg.touch'));
+      figs.push(dgFigure(dgFlat(G.hex, hOwn.concat([[1, 2, 'new'], [1, 3, 'new'], [1, 1, 'other'], [0, 2, 'other']]), gap, false), false, 'tour.dg.blocked'));
+    } else if (fam === 'cube') {
+      var square = function (x, z) { return [[x, z], [x + 1, z], [x + 1, z + 1], [x, z + 1]]; };
+      var cOwn = [[0, 0, 0, 'own'], [1, 0, 0, 'own']];
+      figs.push(dgFigure(dgSolid(square, 1, cOwn.concat([[2, 0, 1, 'new'], [2, 0, 2, 'new']]), [2, 0.5, 1], true), true, 'tour.dg.edge'));
+      figs.push(dgFigure(dgSolid(square, 1, cOwn.concat([[2, 0, 0, 'new'], [2, 0, 1, 'new']]), [2, 0.5, 0.5], false), false, 'tour.dg.face'));
+    } else {
+      var tri = function (x, z) { return G.tri.cellPoly(x, z); };
+      var pOwn = [[0, 0, 0, 'own'], [1, 0, 0, 'own']];
+      figs.push(dgFigure(dgSolid(tri, 0.7, pOwn.concat([[3, 0, 0, 'new'], [4, 0, 0, 'new']]), [1.5, 0.5, 0], true), true, 'tour.dg.edge'));
+      figs.push(dgFigure(dgSolid(tri, 0.7, pOwn.concat([[2, 0, 0, 'new'], [3, 0, 0, 'new']]), [1.25, 0.5, 0.5 * H], false), false, 'tour.dg.face'));
+    }
+    var legend = '<p class="tour-legend"><span class="lg own"></span>' + th('tour.dg.yours') + '<span class="lg new"></span>' + th('tour.dg.new') +
+      (fam === 'gemblo' ? '<span class="lg other"></span>' + th('tour.dg.other') : '') + '</p>';
+    return '<div class="tour-dgs">' + figs.join('') + '</div>' + legend;
   }
 
   /* ================= 联机 ================= */
@@ -2715,19 +3086,15 @@
     $('join-room').disabled = !usable;
     $('join-code').disabled = !usable;
     $('nick').value = prefs.nick;
-    if (!netInfo.ready) note.textContent = '正在检查联机功能…';
-    else if (net && net.kind === 'artifact') {
-      note.textContent = canWrite()
-        ? '这个页面自带联机：建房后把房间号发给朋友。朋友需要能打开本页面，并且有“可编辑”或“参与者”权限。'
-        : '你对这个页面只有查看权限：可以输入房间号观战，但不能建房或入座。请页面主人把你设为可编辑。';
-    } else if (net) note.textContent = '已连上联机服务器。能打开这个网址的朋友都可以用房间号加入。';
-    else if (netInfo.reason === 'file' || netInfo.reason === 'static') {
-      note.innerHTML = '联机需要服务器：在项目目录运行 <code>node server.js</code>，再用浏览器打开 <code>http://localhost:8080</code>；同一网络里的朋友访问你电脑的局域网地址即可。';
-    } else note.textContent = '这个页面没有开启联机功能。';
+    if (!netInfo.ready) note.textContent = t('online.checking');
+    else if (net && net.kind === 'artifact') note.textContent = t(canWrite() ? 'online.noteShared' : 'online.noteReadOnly');
+    else if (net) note.textContent = t('online.noteServer');
+    else if (netInfo.reason === 'file' || netInfo.reason === 'static') note.innerHTML = t('online.noteNeedServerHtml');
+    else note.textContent = t('online.noteNone');
     var last = load(STORE_ONLINE);
     var rejoin = $('rejoin-room');
     rejoin.hidden = !(usable && last && last.code && !online);
-    if (!rejoin.hidden) rejoin.textContent = '回到房间 ' + last.code;
+    if (!rejoin.hidden) rejoin.textContent = t('online.rejoin', { code: last.code });
   }
 
   function showOnlineError(msg) {
@@ -2771,7 +3138,7 @@
       setTokenFor(code, token);
       return joinRoom(code, { autoClaim: false });
     }).catch(function (e) {
-      showOnlineError(e.message || '建房失败，请重试');
+      showOnlineError(e && e.code ? errText(e) : t('online.errCreate'));
     }).then(function () { setOnlineBusy(false); });
   }
 
@@ -2781,7 +3148,7 @@
     unlockAudio();
     showOnlineError(null);
     return net.exists(code).then(function (ok) {
-      if (!ok) throw new Error('找不到房间 ' + code + '，请检查房间号');
+      if (!ok) throw new Error(t('online.errNotFound', { code: code }));
       if (online) closeSession(false);
       var token = tokenFor(code);
       online = {
@@ -2825,15 +3192,15 @@
           save(STORE_ONLINE, null);
           prefs.tab = 'online';
           showScreen('setup');
-          showOnlineError('房间 ' + code + ' 已解散');
+          showOnlineError(t('online.errClosed', { code: code }));
         }),
-        onError: live(function (msg) { lobbyError(msg); })
+        onError: live(function () { lobbyError(t('err.corrupt')); })
       });
       game.mode = 'online';
       showScreen('lobby');
       renderLobby();
     }).catch(function (e) {
-      showOnlineError(e.message || '加入失败，请重试');
+      showOnlineError(e && e.code ? errText(e) : (e && e.message) || t('online.errJoin'));
     });
   }
 
@@ -2880,13 +3247,13 @@
     var owners = Online.seatOwners(room).filter(function (id) { return online.peers.indexOf(id) >= 0; }).sort();
     if (owners[0] !== online.pid) return;
     online.hostTried = room.rev;
-    sendOp({ type: 'host' }, true).then(function () { toast('原房主已离线，你成为了房主'); }, function () {});
+    sendOp({ type: 'host' }, true).then(function () { toast(t('online.becameHost')); }, function () {});
   }
 
   function sendOp(op, quiet) {
-    if (!online) return Promise.reject(new Error('不在房间里'));
+    if (!online) return Promise.reject(new Error(t('online.errNotInRoom')));
     return online.net.op(op).catch(function (err) {
-      if (!quiet && err.code !== 'stale') lobbyError(err.message);
+      if (!quiet && err.code !== 'stale') lobbyError(errText(err));
       throw err;
     });
   }
@@ -2926,7 +3293,7 @@
       showScreen('setup');
     };
     if (!playing) return go();
-    confirmBox('离开房间？', '对局还在进行。离开后你的棋子会停在原地，房主可以把你的座位交给电脑。', '离开').then(function (ok) {
+    confirmBox(t('leave.title'), t('leave.text'), t('leave.yes')).then(function (ok) {
       if (ok) go();
     });
   }
@@ -2935,12 +3302,12 @@
     if (!online) return;
     $('lobby-code').textContent = online.code;
     var conn = $('lobby-conn');
-    conn.textContent = online.connected ? '已连接' : '重新连接中…';
+    conn.textContent = t(online.connected ? 'lobby.connected' : 'lobby.reconnecting');
     conn.classList.toggle('off', !online.connected);
     var room = online.room;
     var seatsEl = $('lobby-seats');
     if (!room || !online.pid) {
-      seatsEl.innerHTML = '<li class="seat"><span class="seat-swatch"></span><div class="ls-main"><b>正在进入房间…</b></div></li>';
+      seatsEl.innerHTML = '<li class="seat"><span class="seat-swatch"></span><div class="ls-main"><b>' + th('lobby.entering') + '</b></div></li>';
       $('lobby-start').hidden = true;
       return;
     }
@@ -2951,39 +3318,41 @@
 
     $('lobby-mode').innerHTML = MODE_LIST.map(function (m) {
       return '<label><input type="radio" name="lobby-mode" id="lobby-mode-' + m + '" value="' + m + '"' + (room.mode === m ? ' checked' : '') +
-        (isHost ? '' : ' disabled') + '><span>' + MODE_LABEL[m] + '</span></label>';
+        (isHost ? '' : ' disabled') + '><span>' + escapeHtml(modeLabel(m)) + '</span></label>';
     }).join('');
 
     seatsEl.innerHTML = M.seats.map(function (seat, i) {
       var s = room.seats[i];
       var mine = s.owner === me;
       var title, sub;
-      if (s.kind === 'off') { title = '空位'; sub = '本局不参战'; }
-      else if (s.kind === 'ai') { title = seat.label + '方电脑'; sub = '电脑 · ' + LEVEL_LABEL[s.level] + (s.level === 'llm' && s.model ? ' · ' + s.model : ''); }
+      var color = colorName(seat.color);
+      if (s.kind === 'off') { title = t('lobby.offTitle'); sub = t('lobby.offSub'); }
+      else if (s.kind === 'ai') { title = t('seat.aiName', { color: color }); sub = t('lobby.aiSub', { level: levelLabel(s.level) }) + (s.level === 'llm' && s.model ? ' · ' + profileLabel(s.model) : ''); }
       else if (s.owner) {
-        title = s.name || '玩家';
-        sub = (mine ? '你' : '玩家') + (s.owner === room.host ? ' · 房主' : '') + (known ? (isPeerOnline(s.owner) ? ' · 在线' : ' · 离线') : '');
-      } else { title = '等待玩家入座'; sub = '空着的玩家座位'; }
+        title = nameOf({ type: 'human', name: s.name });
+        sub = t(mine ? 'lobby.you' : 'lobby.player') + (s.owner === room.host ? ' · ' + t('lobby.host') : '') +
+          (known ? ' · ' + t(isPeerOnline(s.owner) ? 'lobby.online' : 'lobby.offline') : '');
+      } else { title = t('lobby.openTitle'); sub = t('lobby.openSub'); }
       var actions = '';
-      if (s.kind === 'open' && !s.owner && canWrite()) actions += '<button type="button" class="btn primary" data-claim="' + i + '">入座</button>';
-      if (mine) actions += '<button type="button" class="btn" data-release="' + i + '">离座</button>';
+      if (s.kind === 'open' && !s.owner && canWrite()) actions += '<button type="button" class="btn primary" data-claim="' + i + '">' + th('lobby.claim') + '</button>';
+      if (mine) actions += '<button type="button" class="btn" data-release="' + i + '">' + th('lobby.release') + '</button>';
       var hostCtl = '';
       if (isHost) {
-        var kinds = [['open', '玩家'], ['ai', '电脑']];
-        if (room.mode !== 'duo') kinds.push(['off', '空位']);
-        actions += '<div class="seg small" role="radiogroup" aria-label="' + seat.label + '方">' + kinds.map(function (k) {
-          return '<label><input type="radio" name="lobby-kind-' + i + '" value="' + k[0] + '" data-kind="' + i + '"' + (s.kind === k[0] ? ' checked' : '') + '><span>' + k[1] + '</span></label>';
+        var kinds = [['open', t('seat.human')], ['ai', t('seat.ai')]];
+        if (room.mode !== 'duo') kinds.push(['off', t('seat.off')]);
+        actions += '<div class="seg small" role="radiogroup" aria-label="' + th('seat.typeAria', { color: color }) + '">' + kinds.map(function (k) {
+          return '<label><input type="radio" name="lobby-kind-' + i + '" value="' + k[0] + '" data-kind="' + i + '"' + (s.kind === k[0] ? ' checked' : '') + '><span>' + escapeHtml(k[1]) + '</span></label>';
         }).join('') + '</div>';
         if (s.kind === 'ai') {
-          hostCtl = '<div class="seat-level">难度 <div class="seg small" role="radiogroup" aria-label="电脑难度">' + Object.keys(LEVEL_LABEL).map(function (lv) {
-            return '<label><input type="radio" name="lobby-level-' + i + '" value="' + lv + '" data-level="' + i + '"' + (s.level === lv ? ' checked' : '') + '><span>' + LEVEL_LABEL[lv] + '</span></label>';
+          hostCtl = '<div class="seat-level">' + th('seat.level') + ' <div class="seg small" role="radiogroup" aria-label="' + th('seat.levelAria') + '">' + LEVELS.map(function (lv) {
+            return '<label><input type="radio" name="lobby-level-' + i + '" value="' + lv + '" data-level="' + i + '"' + (s.level === lv ? ' checked' : '') + '><span>' + escapeHtml(levelLabel(lv)) + '</span></label>';
           }).join('') + '</div>' +
-            (s.level === 'llm' ? '<label class="seat-model">模型 <select data-model="' + i + '" aria-label="' + seat.label + '方用的模型">' + profileOptions(s.model) + '</select></label>' : '') +
+            (s.level === 'llm' ? '<label class="seat-model">' + th('seat.model') + ' <select data-model="' + i + '" aria-label="' + th('seat.modelAria', { color: color }) + '">' + profileOptions(s.model) + '</select></label>' : '') +
             '</div>';
         }
       }
       return '<li class="seat lobby-seat' + (s.kind === 'off' ? ' off' : '') + (mine ? ' mine' : '') + '" style="--c: var(--p-' + seat.color + ')">' +
-        '<span class="seat-swatch" aria-hidden="true">' + seat.label + '</span>' +
+        '<span class="seat-swatch" aria-hidden="true">' + escapeHtml(t('colorShort.' + seat.color)) + '</span>' +
         '<div class="ls-main"><b>' + escapeHtml(title) + '</b><small>' + escapeHtml(sub) + '</small></div>' +
         '<div class="ls-actions">' + actions + '</div>' + hostCtl +
         '</li>';
@@ -2999,9 +3368,9 @@
     if (isHost) {
       var check = Online.applyOp(room, { type: 'start' }, me, { now: Date.now() });
       start.disabled = !!check.error;
-      wait.textContent = check.error || '';
+      wait.textContent = check.error ? errText(check) : '';
     } else {
-      wait.textContent = '等待房主开始对局…';
+      wait.textContent = t('lobby.waitHost');
     }
 
     var people = $('lobby-people');
@@ -3009,9 +3378,9 @@
     if (ids.indexOf(me) < 0) ids.unshift(me);
     people.innerHTML = ids.map(function (id) {
       var seatIdx = room.seats.findIndex(function (s) { return s.owner === id; });
-      var name = seatIdx >= 0 ? room.seats[seatIdx].name : '观众';
+      var name = seatIdx >= 0 ? nameOf({ type: 'human', name: room.seats[seatIdx].name }) : t('lobby.spectator');
       var color = seatIdx >= 0 ? 'var(--p-' + M.seats[seatIdx].color + ')' : 'var(--ink-soft)';
-      var tag = (id === me ? '你' : '') + (id === room.host ? (id === me ? ' · ' : '') + '房主' : '');
+      var tag = escapeHtml((id === me ? t('lobby.you') : '') + (id === room.host ? (id === me ? ' · ' : '') + t('lobby.host') : ''));
       return '<li style="--c:' + color + '"><i></i><span>' + escapeHtml(name) + '</span><small>' + tag + '</small></li>';
     }).join('');
   }
@@ -3074,7 +3443,7 @@
       if (!canAct()) return;
       var cell = game.view.cellAt(e.clientX, e.clientY, game.state);
       if (game.sel.piece < 0) {
-        toast('先在托盘里选一块棋子');
+        toast(t('toast.pickTray'));
         return;
       }
       if (!cell) return;
@@ -3100,7 +3469,7 @@
         orbit = null;
         if (!o.moved) {
           if (o.button === 2) rotate(1);
-          else if (!o.shift && canAct() && game.sel.piece < 0) toast('先在托盘里选一块棋子；拖动可以旋转视角');
+          else if (!o.shift && canAct() && game.sel.piece < 0) toast(t('toast.pickTray3d'));
         }
         renderSelection();
         return;
@@ -3213,9 +3582,7 @@
       var cfg = buildLocalConfig();
       if (!cfg) {
         var err = $('setup-error');
-        err.textContent = prefs.mode === 'gemblo'
-          ? '宝石阵需要 3、4 或 6 方参战（两人对战时每人各执两色）。'
-          : '至少需要两方参战，请把一个空位改成玩家或电脑。';
+        err.textContent = t(prefs.mode === 'gemblo' ? 'setup.errGemblo' : 'setup.errFew');
         err.hidden = false;
         return;
       }
@@ -3255,7 +3622,7 @@
     $('create-room').addEventListener('click', createOnlineRoom);
     function doJoin() {
       var code = Online.normalizeCode($('join-code').value);
-      if (!code) { showOnlineError('房间号是 5 位字母或数字'); return; }
+      if (!code) { showOnlineError(t('online.errCode')); return; }
       setOnlineBusy(true);
       joinRoom(code).then(function () { setOnlineBusy(false); });
     }
@@ -3274,8 +3641,8 @@
       if (!online) return;
       var btn = $('copy-code');
       function done(ok) {
-        btn.textContent = ok ? '已复制' : '请手动复制';
-        setTimeout(function () { btn.textContent = '复制'; }, 1600);
+        btn.textContent = t(ok ? 'lobby.copied' : 'lobby.copyManual');
+        setTimeout(function () { btn.textContent = t('lobby.copy'); }, 1600);
         if (!ok) {
           var range = document.createRange();
           range.selectNodeContents($('lobby-code'));
@@ -3410,9 +3777,9 @@
       if (addRecord(rec)) {
         game.recordSaved = true;
         renderRecordButtons();
-        $('end-record-note').textContent = '已保存，可以在开局页面的「对局记录」里回放';
+        $('end-record-note').textContent = t('record.savedNote');
       } else {
-        $('end-record-note').textContent = '保存失败：浏览器存储不可用或已满，可以改用导出文件';
+        $('end-record-note').textContent = t('record.saveFail');
       }
     });
     $('end-export').addEventListener('click', function () {
@@ -3442,10 +3809,10 @@
       } else if (b.dataset.export) {
         exportRecord(rec).then(function (r) { if (exportText(r)) renderRecords(exportText(r)); });
       } else {
-        confirmBox('删除这局记录？', MODE_LABEL[rec.mode] + '，' + fmtDate(rec.date) + '。删除后不能恢复。', '删除').then(function (ok) {
+        confirmBox(t('records.deleteTitle'), t('records.deleteText', { mode: modeLabel(rec.mode), date: fmtDate(rec.date) }), t('records.delete')).then(function (ok) {
           if (!ok) return;
           storeRecords(loadRecords().filter(function (r) { return r.id !== rec.id; }));
-          renderRecords('已删除');
+          renderRecords(t('records.deleted'));
         });
       }
     });
@@ -3474,6 +3841,19 @@
     window.addEventListener('resize', function () {
       if (game.view && game.view.resize()) game.view.draw();
       if (demo.view && demo.view.resize()) demo.view.draw();
+      placeTour();
+    });
+
+    // 语言与新手引导
+    $('lang-select').addEventListener('change', function (e) { setLanguage(e.target.value); });
+    $('help-btn').addEventListener('click', function () { if (game.state) startTour(game.state.mode); });
+    $('tour-next').addEventListener('click', function () { tourGo(1); });
+    $('tour-back').addEventListener('click', function () { tourGo(-1); });
+    $('tour-skip').addEventListener('click', endTour);
+    $('tour').addEventListener('cancel', function (e) { e.preventDefault(); endTour(); });
+    $('tour').addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight') { e.preventDefault(); tourGo(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); tourGo(-1); }
     });
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden && !$('setup').hidden) demoStep();
@@ -3482,6 +3862,8 @@
 
   /* ================= 启动 ================= */
 
+  initLang();
+  applyI18n();
   applyTheme();
   readPalette();
   bindUI();

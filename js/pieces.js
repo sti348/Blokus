@@ -1,5 +1,5 @@
 /*
- * 角斗士棋（Blokus）棋子定义，两套：
+ * 角斗士棋（BlockTurf）棋子定义，两套：
  *   square —— 方块：21 块（1 格 ×1、2 格 ×1、3 格 ×2、4 格 ×5、5 格 ×12），共 89 格
  *   tri    —— 三角：22 块（1 ×1、2 ×1、3 ×1、4 ×3、5 ×4、6 ×12），共 110 格
  *
@@ -726,6 +726,32 @@
     hex: buildSet(HEX, GEMBLO_RAW)
   };
   SETS.cube.dims = 3;
+
+  // 界面翻译用的名字键（见 js/i18n）：方块与宝石阵按编号，其余按生成的中文名对应；字母编号的棋子带上字母
+  var NAME_KEYS = {
+    tri: {
+      '单三角': 'single', '菱形': 'diamond', '梯形': 'trapezoid', '四格长条': 'bar4', '五格长条': 'bar5', '六格长条': 'bar6',
+      '大三角': 'big', '六边形': 'hexagon', '四格': 'letter4', '五格': 'letter5', '六格': 'letter6'
+    },
+    cube: {
+      '单块': 'mono', '二连': 'domino', '三连直条': 'bar3', '四连直条': 'bar4', '小角': 'v', 'T 形': 't', '三脚架': 'tripod',
+      '方块': 'square', 'L 形': 'l', 'S 形': 's', '右旋': 'right', '左旋': 'left'
+    },
+    prism: {
+      '单柱': 'mono', '双层柱': 'column2', '三层柱': 'column3', '四层柱': 'column4', '四格弯条': 'bent', '三块': 'letter3', '四块': 'letter4',
+      '菱形': 'tri.diamond', '梯形': 'tri.trapezoid', '四格长条': 'tri.bar4', '大三角': 'tri.big'
+    }
+  };
+  function labelOf(kind, piece) {
+    if (kind === 'square') return { key: 'piece.sq.' + piece.id, letter: '' };
+    if (kind === 'hex') return { key: 'piece.hex.' + piece.id, letter: '' };
+    var m = / ([A-L])$/.exec(piece.name);
+    var k = NAME_KEYS[kind][m ? piece.name.slice(0, -2) : piece.name];
+    return { key: 'piece.' + (k.indexOf('.') > 0 ? k : kind + '.' + k), letter: m ? m[1] : '' };
+  }
+  Object.keys(SETS).forEach(function (kind) {
+    SETS[kind].pieces.forEach(function (piece) { piece.label = labelOf(kind, piece); });
+  });
 
   return {
     SETS: SETS,

@@ -87,6 +87,9 @@ test('对局记录：导入的文件不可信，只取座位和动作并重新�
   assert.equal(Record.parse(null), null);
   assert.equal(Record.parse({}), null);
   assert.equal(Record.parse(Object.assign(clone(), { format: 'other' })), null);
+  // 改名前导出的文件（格式名 blokus-record）照样能导入
+  assert.ok(Record.parse(Object.assign(clone(), { format: 'blokus-record' })));
+  assert.equal(good.format, 'blockturf-record');
   assert.equal(Record.parse(Object.assign(clone(), { v: 99 })), null);
   assert.equal(Record.parse(Object.assign(clone(), { mode: '__proto__' })), null);
   assert.equal(Record.parse(Object.assign(clone(), { mode: 'gemblo', players: clone().players.slice(0, 2) })), null);

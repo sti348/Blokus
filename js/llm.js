@@ -305,12 +305,18 @@
   }
 
   // 固定的说明放在最前面，便于接口缓存前缀
-  var SYSTEM = '你是角斗士棋（Blokus）高手，替一方挑选下一步。终局时每个没放上棋盘的格子扣 1 分。' +
+  var SYSTEM = '你是角斗士棋（BlockTurf）高手，替一方挑选下一步。终局时每个没放上棋盘的格子扣 1 分。' +
     '程序已经把每个候选往后推演过，下面几步都合法而且推演结果差不多一样好，#1 略优。请结合局势取舍：压制领先的对手、' +
     '抢对手正要进入的空地、给自己留下可落子的角点、别把自己困死。没有明显理由就选 #1。' +
     '只回复一行 JSON：{"choice": 编号, "reason": "不超过 20 字的中文理由"}';
 
-  function buildMessages(state, cands) {
+  // 理由显示在玩家卡片上，按界面语言要求（lang 为英文的语言名；中文或不传时用上面的原文）
+  function systemPrompt(lang) {
+    if (!lang || /Chinese/.test(lang)) return SYSTEM;
+    return SYSTEM.replace('不超过 20 字的中文理由', 'a short reason in ' + lang + ', at most 12 words');
+  }
+
+  function buildMessages(state, cands, lang) {
     var legend = state.topo.dims === 3
       ? '俯视图，每列显示最上面那格的颜色和层数（如 B2），. 为空列'
       : '字母为各方棋子，. 为空格';
@@ -322,7 +328,7 @@
       '【候选】',
       cands.map(function (c, k) { return '#' + (k + 1) + ' ' + candidateText(state, c); }).join('\n')
     ].join('\n');
-    return [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }];
+    return [{ role: 'system', content: systemPrompt(lang) }, { role: 'user', content: user }];
   }
 
   // Jev 的选择题：局面放在 state，候选放在 criteria（键为 m1、m2…）
@@ -334,7 +340,7 @@
     });
     return {
       model: model,
-      state: '角斗士棋（Blokus）。' + rulesText(state) + '终局时每个没放上棋盘的格子扣 1 分。\n' +
+      state: '角斗士棋（BlockTurf）。' + rulesText(state) + '终局时每个没放上棋盘的格子扣 1 分。\n' +
         situationText(state) + '\n棋盘：\n' + boardText(state),
       questions: {
         move: {
@@ -431,6 +437,7 @@
     var hint = status === 401 || status === 403 ? '密钥不对或没有权限' : status === 404 ? '地址或模型名不对' : status === 429 ? '请求太频繁或额度用完' : '';
     var e = llmError('http', '接口返回 ' + status + (hint ? '（' + hint + '）' : '') + (msg ? '：' + msg : ''));
     e.status = status;
+    e.detail = msg || '';
     return e;
   }
 
@@ -539,7 +546,11 @@
       return r;
     }, function (err) {
       link.done();
-      if (link.timedOut()) throw llmError('timeout', '大模型超过 ' + settings.timeout + ' 秒没有回答');
+      if (link.timedOut()) {
+        var e = llmError('timeout', '大模型超过 ' + settings.timeout + ' 秒没有回答');
+        e.seconds = settings.timeout;
+        throw e;
+      }
       if (env.signal && env.signal.aborted) throw llmError('cancelled', '已取消');
       throw err && err.code ? err : llmError('network', (err && err.message) || '请求失败');
     });
@@ -582,13 +593,14 @@
         return {
           move: cands[r.index].move,
           reason: '在 ' + cands.length + ' 步好棋里选了第 ' + (r.index + 1) + ' 步' + (conf ? '，' + conf : ''),
+          confidence: r.confidence,
           index: r.index,
           asked: true,
           options: cands.length
         };
       });
     }
-    return ask(settings, buildMessages(state, cands), env).then(function (r) {
+    return ask(settings, buildMessages(state, cands, env.lang), env).then(function (r) {
       var p = parseReply(r.text, cands.length);
       if (!p) throw llmError('bad_reply', '大模型的回答里没有有效的候选编号');
       return { move: cands[p.index].move, reason: p.reason, index: p.index, asked: true, options: cands.length };
