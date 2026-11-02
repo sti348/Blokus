@@ -1,0 +1,13 @@
+# Exclude development artifacts and secrets from the container build context.
+.git
+.github
+node_modules
+dist
+coverage
+.env
+.env.*
+*.log
+*.tar.gz
+*.zip
+.DS_Store
+.vercel
