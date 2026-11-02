@@ -30,7 +30,9 @@
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
   // 平面棋盘的落子动画：整块棋子放下去
-  var PLACE_MS = REDUCED_MOTION ? 0 : 380;
+  var PLACE_MS = REDUCED_MOTION ? 0 : 300;
+  // 落子动画里棋子落到棋盘上的时刻（占整段的比例），之后只剩轻轻一压
+  var LAND_T = 0.6;
   var ANCHOR_MS = REDUCED_MOTION ? 0 : 360;
 
   // 重新触发一次性的 CSS 动画
@@ -502,11 +504,12 @@
       var acol = colorOf(anim.player);
       var mx = 0, my = 0;
       anim.cells.forEach(function (i) { var c = cellCenterPx(L, i); mx += c[0] / anim.cells.length; my += c[1] / anim.cells.length; });
-      var land = Math.min(1, animT / 0.72);
-      var settle = 1 + 2.2 * Math.pow(land - 1, 3) + 1.2 * Math.pow(land - 1, 2);
-      var lift = 1 - land;
-      var sc = 1 + 0.12 * (1 - settle);
-      var dy = -L.inr * 0.9 * lift * lift;
+      // 下落是加速的（像真的掉下去），正好在 LAND_T 时碰到棋盘；之后轻轻一压再回弹
+      var land = Math.min(1, animT / LAND_T);
+      var lift = 1 - land * land;
+      var press = animT > LAND_T ? 0.045 * Math.sin(Math.PI * (animT - LAND_T) / (1 - LAND_T)) : 0;
+      var sc = 1 + 0.12 * lift - press;
+      var dy = -L.inr * 0.9 * lift;
       g.save();
       g.translate(mx, my + dy);
       g.scale(sc, sc);
@@ -527,20 +530,29 @@
 
     // 上一步高亮
     // 上一步：用落子方自己的颜色发一圈柔光，再描一道细亮边（不再用黑框）。
-    // 落子动画一开始就在落点淡入，电脑连续快速落子时也看得见
-    if (ov.lastMove && ov.lastMove.length) {
-      var owner = state.board[ov.lastMove[0]];
+    // 新棋子还在空中时，柔光留在上一块已经落定的棋子上；新棋子一落到棋盘上，柔光才移过去
+    var landed = !anim || animT >= LAND_T;
+    var glow = ov.lastMove;
+    if (landed) {
+      this.landedMove = ov.lastMove ? ov.lastMove.slice() : null;
+    } else {
+      glow = this.landedMove;
+      // 换了一局（那些格子已经不是同一种颜色的棋子）就不画
+      if (glow && !(glow.length && glow.every(function (i) { return state.board[i] >= 0 && state.board[i] === state.board[glow[0]] && !animSet[i]; }))) glow = null;
+    }
+    if (glow && glow.length) {
+      var owner = state.board[glow[0]];
       var lc = owner >= 0 ? colorOf(owner) : palette.ink;
-      var gf = anim && animT < 1 ? Math.min(1, animT / 0.45) : 1;
+      var gf = anim && landed && glow === ov.lastMove ? clamp((animT - LAND_T) / 0.15, 0, 1) : 1;
       g.save();
       g.shadowColor = lc;
       g.shadowBlur = Math.max(6, L.inr * 1.1);
       g.globalAlpha = 0.9 * gf;
-      this.outline(L, ov.lastMove, lc, Math.max(2, L.inr * 0.2));
+      this.outline(L, glow, lc, Math.max(2, L.inr * 0.2));
       g.restore();
       g.save();
       g.globalAlpha = 0.75 * gf;
-      this.outline(L, ov.lastMove, 'rgba(255, 255, 255, 0.9)', Math.max(1, L.inr * 0.07));
+      this.outline(L, glow, 'rgba(255, 255, 255, 0.9)', Math.max(1, L.inr * 0.07));
       g.restore();
     }
 
