@@ -185,11 +185,9 @@
 
 ## 发布到 CrazyGames
 
-```bash
-npm run build:crazygames
-```
+直接提交自己的网站（CrazyGames 用 iframe 嵌入），不用上传文件。提交的网址在末尾加 `?crazygames=1`，例如 `https://你的服务.code.run/?crazygames=1`。
 
-生成 `dist/blockturf-crazygames.zip`（同样内容也在 `dist/crazygames/`），在 CrazyGames 开发者后台上传这个 zip 即可（`index.html` 在 zip 最上层，只用相对路径，约 250 KB）。和网站版唯一的区别是 `index.html` 的 `<head>` 里先加载 CrazyGames SDK v3；网站版和 Claude 发布的页面不加载 SDK，行为不变。
+网站只在被 CrazyGames 嵌入时才加载 CrazyGames SDK v3：网址带 `crazygames` 参数，或者页面在 iframe 里且嵌入它的页面来自 crazygames.com（网页、安卓应用，以及 iOS 应用的 `capacitor://*.crazygames.com`）。直接打开网站、Claude 发布的页面都不加载 SDK，行为不变。SDK 加载失败（被拦截、断网）时游戏照常启动。服务器没有发送禁止被嵌入的响应头，联机在 CrazyGames 里照常可用。
 
 SDK 的接入都在 `js/platform.js`（没有 SDK 时全部是空操作）：
 
@@ -199,10 +197,8 @@ SDK 的接入都在 `js/platform.js`（没有 SDK 时全部是空操作）：
 - **语言**：没手动选过语言时用平台给的 `locale`（平台要求），不支持的语言用英文。
 - **存档**：偏好、新手引导、对局记录、没下完的局存进平台的 data 模块，登录用户跨设备同步（提交时在后台选择 Progress Save →「使用 CrazyGames SDK 的 Data Module」；没开时自动退回本机存储）。大模型密钥和联机身份只存在本机。
 - **庆祝**：一个玩家对电脑获胜时调用 `happytime()`。
-- **联机**：CrazyGames 只托管静态文件，没有联机服务器，所以这个版本不显示「本地 / 联机」切换。
-- 页面在 CrazyGames 以外的网站打开时 SDK 报告 `disabled`（初始化要等 SDK 自己超时，约 7 秒），游戏照常运行，只是不上报、不放广告。
 
-在本机测试：`npx serve dist/crazygames`、`python3 -m http.server -d dist/crazygames` 之类在 localhost 打开，SDK 处于 `local` 环境，结束一局会出现「A midgame ad would appear here」的模拟广告；加 `?muteAudio=true` 可以测试平台静音。正式提交前在开发者后台的预览（QA 工具）里再检查一遍。注意 Basic Launch 阶段平台不放广告（返回 adsDisabled），进入 Full Launch 后才有广告收入。
+测试：在网址后加 `?useLocalSdk=true`（任何网址都行，包括 `npm start` 的 localhost），SDK 进入本地测试模式，结束一局会出现「A midgame ad would appear here」的模拟广告；再加 `&muteAudio=true` 可以测试平台静音。正式提交前在 CrazyGames 开发者后台的预览（QA 工具）里再检查一遍。注意 Basic Launch 阶段平台不放广告（返回 adsDisabled），进入 Full Launch 后才有广告收入；按平台规定，外部托管的游戏只有正确接入 SDK 才有收入。
 
 ## 项目结构
 
@@ -216,14 +212,13 @@ js/llm.js         大模型电脑：挑选候选、提示词、调用 OpenAI 兼
 js/view3d.js      立体与三棱柱模式的绘制（Canvas 2D 正交投影，无依赖）与拾取
 js/online.js      联机房间逻辑（服务器与浏览器共用）：入座、开局、校验棋步、托管、换房主
 js/net.js         联机传输层：自建服务器 / Claude 页面共享存储
-js/platform.js    游戏平台适配（CrazyGames SDK：广告、对局开始 / 停止、静音、语言、存档）
+js/platform.js    游戏平台适配（被 CrazyGames 嵌入时加载 SDK：广告、对局开始 / 停止、静音、语言、存档）
 js/record.js      对局记录：生成、校验、导出（含可读流程）与回放用的局面
 js/i18n.js        多语言：语言列表、按浏览器语言自动选择、取词（占位符、复数、退回英文）
 js/i18n/*.js      各语言词典（en.js 为全部词条的清单）
 js/app.js         界面与交互
 server.js         联机服务器（Node.js，无依赖）
-tools/build-crazygames.js  打包 CrazyGames 上传用的 zip
-tests/            规则引擎、电脑、大模型电脑、房间逻辑、服务器、对局记录、多语言词典、平台适配与打包的测试
+tests/            规则引擎、电脑、大模型电脑、房间逻辑、服务器、对局记录、多语言词典与平台适配的测试
 ```
 
 `pieces.js`、`engine.js`、`ai.js`、`llm.js`、`online.js`、`record.js`、`i18n.js` 不依赖 DOM，可以在 Node 中直接使用。
@@ -234,4 +229,4 @@ tests/            规则引擎、电脑、大模型电脑、房间逻辑、服�
 npm test
 ```
 
-测试会在方格、三角格、宝石阵、立方体和三棱柱棋盘上把走法生成结果与暴力枚举逐一比对，跑完整的随机对局检查终局与重放的一致性，校验房间操作的权限，并启动服务器让两个客户端加两个电脑完整打完一局。大模型电脑用假的接口测试候选范围、提示词、回答解析、DeepSeek 关闭思考与重试、Jev（官方与 OpenRouter）、出错与取消、服务器转发，以及联机时由房主代为落子、超时由服务器代下。对局记录测试保存、导出、再导入后重放得到同一局面，并检查导入的文件被篡改时（名字、颜色、模式、座位、动作）的处理。多语言测试检查自动选择语言的规则，以及每种语言的词条、占位符、HTML 标签和复数形式是否齐全，代码和页面里用到的词条是否都有。平台适配测试用假的 CrazyGames SDK 检查上报顺序、广告开始才静音、没有广告时直接继续、disabled 环境和 data 模块不可用时的退路；打包测试检查 SDK 在所有游戏脚本之前、只收相对路径的本地文件。
+测试会在方格、三角格、宝石阵、立方体和三棱柱棋盘上把走法生成结果与暴力枚举逐一比对，跑完整的随机对局检查终局与重放的一致性，校验房间操作的权限，并启动服务器让两个客户端加两个电脑完整打完一局。大模型电脑用假的接口测试候选范围、提示词、回答解析、DeepSeek 关闭思考与重试、Jev（官方与 OpenRouter）、出错与取消、服务器转发，以及联机时由房主代为落子、超时由服务器代下。对局记录测试保存、导出、再导入后重放得到同一局面，并检查导入的文件被篡改时（名字、颜色、模式、座位、动作）的处理。多语言测试检查自动选择语言的规则，以及每种语言的词条、占位符、HTML 标签和复数形式是否齐全，代码和页面里用到的词条是否都有。平台适配测试用假的 CrazyGames SDK 检查上报顺序、广告开始才静音、没有广告时直接继续、disabled 环境和 data 模块不可用时的退路，以及只在被 CrazyGames 嵌入时才加载 SDK 的判断。

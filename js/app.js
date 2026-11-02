@@ -518,35 +518,6 @@
       if (v < 0 || (animSet && animSet[i])) return;
       self.drawCell(L, i, colorOf(v));
     });
-    if (anim && animT < 1) {
-      // 整块棋子“放下去”：先略微抬起（稍大、带投影），再整体落到棋盘上，轻轻一压
-      var acol = colorOf(anim.player);
-      var mx = 0, my = 0;
-      anim.cells.forEach(function (i) { var c = cellCenterPx(L, i); mx += c[0] / anim.cells.length; my += c[1] / anim.cells.length; });
-      // 下落是加速的（像真的掉下去），正好在 LAND_T 时碰到棋盘；之后轻轻一压再回弹
-      var land = Math.min(1, animT / LAND_T);
-      var lift = 1 - land * land;
-      var press = animT > LAND_T ? 0.045 * Math.sin(Math.PI * (animT - LAND_T) / (1 - LAND_T)) : 0;
-      var sc = 1 + 0.12 * lift - press;
-      var dy = -L.inr * 0.9 * lift;
-      g.save();
-      g.translate(mx, my + dy);
-      g.scale(sc, sc);
-      g.translate(-mx, -my);
-      if (lift > 0) {
-        g.save();
-        g.shadowColor = 'rgba(10, 14, 24, ' + (0.38 * lift).toFixed(3) + ')';
-        g.shadowBlur = L.inr * 2.4 * lift;
-        g.shadowOffsetY = L.inr * 1.6 * lift;
-        anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
-        g.restore();
-      }
-      anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
-      g.restore();
-    } else if (anim) {
-      anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player)); });
-    }
-
     // 上一步高亮
     // 上一步：用落子方自己的颜色发一圈柔光，再描一道细亮边（不再用黑框）。
     // 新棋子还在空中时，柔光留在上一块已经落定的棋子上；新棋子一落到棋盘上，柔光才移过去
@@ -588,6 +559,36 @@
         g.fill();
       });
       g.globalAlpha = 1;
+    }
+
+    // 正在落下的棋子画在棋盘上所有标记（上一步的柔光、角点）之上，悬空时盖住下面的棋子而不是被它们的光边压住
+    if (anim && animT < 1) {
+      // 整块棋子“放下去”：先略微抬起（稍大、带投影），再整体落到棋盘上，轻轻一压
+      var acol = colorOf(anim.player);
+      var mx = 0, my = 0;
+      anim.cells.forEach(function (i) { var c = cellCenterPx(L, i); mx += c[0] / anim.cells.length; my += c[1] / anim.cells.length; });
+      // 下落是加速的（像真的掉下去），正好在 LAND_T 时碰到棋盘；之后轻轻一压再回弹
+      var land = Math.min(1, animT / LAND_T);
+      var lift = 1 - land * land;
+      var press = animT > LAND_T ? 0.045 * Math.sin(Math.PI * (animT - LAND_T) / (1 - LAND_T)) : 0;
+      var sc = 1 + 0.12 * lift - press;
+      var dy = -L.inr * 0.9 * lift;
+      g.save();
+      g.translate(mx, my + dy);
+      g.scale(sc, sc);
+      g.translate(-mx, -my);
+      if (lift > 0) {
+        g.save();
+        g.shadowColor = 'rgba(10, 14, 24, ' + (0.38 * lift).toFixed(3) + ')';
+        g.shadowBlur = L.inr * 2.4 * lift;
+        g.shadowOffsetY = L.inr * 1.6 * lift;
+        anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
+        g.restore();
+      }
+      anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
+      g.restore();
+    } else if (anim) {
+      anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player)); });
     }
 
     // 提示走法
@@ -3334,13 +3335,6 @@
   var netInfo = { ready: false, net: null, reason: null, promise: null };
 
   function ensureNet() {
-    // CrazyGames 版本是静态托管，没有联机服务器，也不去探测
-    if (!netInfo.promise && Platform.crazyGames) {
-      netInfo.ready = true;
-      netInfo.net = null;
-      netInfo.reason = 'static';
-      netInfo.promise = Promise.resolve({ net: null, reason: 'static' });
-    }
     if (!netInfo.promise) {
       netInfo.promise = Net.detect().then(function (r) {
         netInfo.ready = true;
@@ -4222,7 +4216,6 @@
 
   /* ================= 启动 ================= */
 
-  if (Platform.crazyGames) document.documentElement.classList.add('on-crazygames');
   initLang();
   applyI18n();
   buildModeSeg();

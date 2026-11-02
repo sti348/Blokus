@@ -156,3 +156,26 @@ test('平台：没有广告（冷却、被拦截、未填充）时直接继续�
   await P.init();
   assert.equal(await P.endOfGameAd(), 'error');
 });
+
+test('平台：只在被 CrazyGames 嵌入时加载 SDK', () => {
+  const { P } = loadPlatform(null);
+  const want = (env) => P.wantsSdk(Object.assign({ search: '', referrer: '', ancestors: [], framed: false }, env));
+  // 直接打开网站
+  assert.equal(want({}), false);
+  assert.equal(want({ referrer: 'https://www.google.com/' }), false);
+  // 提交给 CrazyGames 的网址带参数
+  assert.equal(want({ search: '?crazygames=1' }), true);
+  assert.equal(want({ search: '?crazygames' }), true);
+  assert.equal(want({ search: '?a=b&CrazyGames=true' }), true);
+  assert.equal(want({ search: '?crazygames=0', framed: true, referrer: 'https://games.crazygames.com/' }), false);
+  assert.equal(want({ search: '?useLocalSdk=true' }), true);
+  // 在 CrazyGames 的 iframe 里（网页、安卓应用、iOS 应用）
+  assert.equal(want({ framed: true, referrer: 'https://games.crazygames.com/en_US/blockturf/index.html' }), true);
+  assert.equal(want({ framed: true, ancestors: ['https://games.crazygames.com', 'https://www.crazygames.com'] }), true);
+  assert.equal(want({ framed: true, ancestors: ['capacitor://app.crazygames.com'] }), true);
+  // 不在 iframe 里时不看来源；冒充的域名不算
+  assert.equal(want({ referrer: 'https://www.crazygames.com/game/blockturf' }), false);
+  assert.equal(want({ framed: true, referrer: 'https://notcrazygames.com/' }), false);
+  assert.equal(want({ framed: true, referrer: 'https://crazygames.com.evil.example/' }), false);
+  assert.equal(want({ framed: true, ancestors: ['https://example.com'] }), false);
+});

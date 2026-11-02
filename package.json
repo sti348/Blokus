@@ -6,8 +6,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
-    "build:crazygames": "node tools/build-crazygames.js"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"
