@@ -183,6 +183,11 @@ test('服务器：两名玩家 + 两个电脑完整打完一局', async (t) => {
   const base = `http://127.0.0.1:${server.address().port}`;
   const info = await fetch(base + '/api/info').then((r) => r.json());
   assert.equal(info.blokus, 1);
+  // 全站游玩次数：开一局 +1，同一地址连续请求只算一次
+  assert.equal((await fetch(base + '/api/stats').then((r) => r.json())).plays, 0);
+  assert.equal((await fetch(base + '/api/stats/play', { method: 'POST' }).then((r) => r.json())).plays, 1);
+  assert.equal((await fetch(base + '/api/stats/play', { method: 'POST' }).then((r) => r.json())).plays, 1);
+  assert.equal((await fetch(base + '/api/stats').then((r) => r.json())).plays, 1);
   // 静态文件白名单
   assert.equal((await fetch(base + '/')).status, 200);
   assert.equal((await fetch(base + '/js/engine.js')).status, 200);

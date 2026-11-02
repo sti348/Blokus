@@ -47,6 +47,7 @@
     'setup.seats': '席',
     'setup.seatsOrder': '手番順',
     'setup.count': 'プレイ人数',
+    'stats.plays.other': 'これまでのプレイ <b>{count}</b> 回',
     'setup.start': 'ゲーム開始',
     'setup.resume': '前回の続きから',
     'setup.records': '棋譜',

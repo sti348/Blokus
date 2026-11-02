@@ -47,6 +47,8 @@
     'setup.seats': 'Lugares',
     'setup.seatsOrder': 'na ordem dos turnos',
     'setup.count': 'Número de jogadores',
+    'stats.plays.one': '<b>{count}</b> partida jogada',
+    'stats.plays.other': '<b>{count}</b> partidas jogadas',
     'setup.start': 'Começar partida',
     'setup.resume': 'Continuar a última partida',
     'setup.records': 'Partidas salvas',

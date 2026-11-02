@@ -51,6 +51,8 @@
     'setup.seats': 'Seats',
     'setup.seatsOrder': 'in turn order',
     'setup.count': 'Number of players',
+    'stats.plays.one': '<b>{count}</b> game played',
+    'stats.plays.other': '<b>{count}</b> games played',
     'setup.start': 'Start game',
     'setup.resume': 'Resume last game',
     'setup.records': 'Game records',

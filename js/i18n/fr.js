@@ -47,6 +47,8 @@
     'setup.seats': 'Places',
     'setup.seatsOrder': 'dans l’ordre de jeu',
     'setup.count': 'Nombre de joueurs',
+    'stats.plays.one': '<b>{count}</b> partie jouée',
+    'stats.plays.other': '<b>{count}</b> parties jouées',
     'setup.start': 'Lancer la partie',
     'setup.resume': 'Reprendre la dernière partie',
     'setup.records': 'Parties enregistrées',

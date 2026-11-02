@@ -1304,3 +1304,29 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
 .btn:active:not(:disabled) { transform: translateY(1px) scale(.98); }
 .mode-card:active span { transform: scale(.97); }
 .mode-card span { transition: color .2s, background-color .2s, transform .15s; }
+
+/* 首页右下角：全站游玩次数 */
+.play-count {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--raised) 85%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  color: var(--ink-soft);
+  font-size: 12px;
+  backdrop-filter: blur(6px);
+  animation: fade-in .4s ease-out;
+  z-index: 5;
+}
+.play-count b { color: var(--ink); font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; }
+.play-count svg { width: 14px; height: 14px; fill: var(--p-blue); }
+@media (max-width: 900px) {
+  .play-count { position: static; justify-self: end; margin-top: 4px; }
+}

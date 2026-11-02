@@ -49,6 +49,37 @@ const MIME = {
   '.ico': 'image/x-icon'
 };
 
+// 全站游玩次数：每开一局 +1（同一地址 3 秒内只算一次），保存在 statsFile 里
+const stats = { plays: 0, file: null, timer: null, last: new Map() };
+
+function loadStats(file) {
+  stats.file = file || null;
+  stats.plays = 0;
+  if (!file) return;
+  try {
+    const n = JSON.parse(fs.readFileSync(file, 'utf8')).plays;
+    if (Number.isInteger(n) && n >= 0) stats.plays = n;
+  } catch (e) { /* 第一次运行还没有文件 */ }
+}
+
+function saveStats() {
+  if (!stats.file) return;
+  clearTimeout(stats.timer);
+  stats.timer = setTimeout(() => fs.writeFile(stats.file, JSON.stringify({ plays: stats.plays }), () => {}), 1000);
+}
+
+function countPlay(req, res) {
+  const ip = req.socket.remoteAddress || '';
+  const now = Date.now();
+  if (now - (stats.last.get(ip) || 0) >= 3000) {
+    if (stats.last.size > 5000) stats.last.clear();
+    stats.last.set(ip, now);
+    stats.plays++;
+    saveStats();
+  }
+  sendJson(res, 200, { plays: stats.plays });
+}
+
 /** code -> { room, clients: Set<{ res, pid }>, aiTimer, lastActive } */
 const rooms = new Map();
 
@@ -308,6 +339,8 @@ async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
   if (p === '/api/info' && req.method === 'GET') return sendJson(res, 200, { blokus: 1, rooms: rooms.size, llmProxy: llmProxyOn });
+  if (p === '/api/stats' && req.method === 'GET') return sendJson(res, 200, { plays: stats.plays });
+  if (p === '/api/stats/play' && req.method === 'POST') return countPlay(req, res);
   if (p === '/api/llm' && req.method === 'POST') return llmProxy(req, res);
   if (p === '/api/rooms' && req.method === 'POST') return createRoom(req, res);
   const one = /^\/api\/rooms\/([A-Za-z0-9]{5})$/.exec(p);
@@ -338,6 +371,7 @@ function start(port, host, opts) {
   if (opts && opts.aiDelay != null) AI_DELAY = { fast: opts.aiDelay, normal: opts.aiDelay, slow: opts.aiDelay };
   if (opts && opts.llmWait != null) LLM_WAIT_MS = opts.llmWait;
   if (opts && opts.llmProxy != null) llmProxyOn = !!opts.llmProxy;
+  loadStats(opts && opts.statsFile);
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       if (!res.headersSent) sendJson(res, err.status || 500, { error: err.status ? err.message : '服务器出错了' });
@@ -356,13 +390,14 @@ function start(port, host, opts) {
   sweep.unref();
   server.on('close', () => {
     clearInterval(sweep);
+    clearTimeout(stats.timer);
     for (const entry of rooms.values()) clearTimeout(entry.aiTimer);
   });
   return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
 }
 
 if (require.main === module) {
-  start(PORT, HOST).then((server) => {
+  start(PORT, HOST, { statsFile: process.env.STATS_FILE || path.join(ROOT, 'stats.json') }).then((server) => {
     const addr = server.address();
     console.log('角斗士棋已启动：http://localhost:%d', addr.port);
     const nets = require('os').networkInterfaces();

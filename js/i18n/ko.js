@@ -47,6 +47,7 @@
     'setup.seats': '자리',
     'setup.seatsOrder': '차례 순서대로',
     'setup.count': '참가 인원',
+    'stats.plays.other': '지금까지 <b>{count}</b>판 플레이',
     'setup.start': '게임 시작',
     'setup.resume': '지난 게임 이어 하기',
     'setup.records': '기보',

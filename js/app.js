@@ -29,8 +29,8 @@
   var RECORD_LIMIT = 60;
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
-  // 平面棋盘的落子动画：逐格弹出 + 一圈波纹
-  var PLACE_MS = REDUCED_MOTION ? 0 : 640;
+  // 平面棋盘的落子动画：逐格弹出
+  var PLACE_MS = REDUCED_MOTION ? 0 : 560;
   var POP_MS = 300;
   var ANCHOR_MS = REDUCED_MOTION ? 0 : 360;
 
@@ -43,7 +43,6 @@
   }
 
   function animMs(state) { return state && state.topo.dims === 3 ? DROP_MS : PLACE_MS; }
-  function easeOutCubic(x) { return 1 - Math.pow(1 - x, 3); }
   function easeOutBack(x) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); }
 
   function $(id) { return document.getElementById(id); }
@@ -500,7 +499,7 @@
       self.drawCell(L, i, colorOf(v));
     });
     if (anim && animT < 1) {
-      // 从棋子中心往外逐格弹出（带一点回弹），同时一圈波纹扩散开
+      // 从棋子中心往外逐格弹出（带一点回弹）
       var acol = colorOf(anim.player);
       var cs = anim.cells.map(function (i) { return cellCenterPx(L, i); });
       var mx = 0, my = 0;
@@ -514,15 +513,6 @@
         if (x <= 0) return;
         self.drawCell(L, o.i, acol, Math.min(1, x * 2.2), 0.5 + 0.5 * easeOutBack(x));
       });
-      var reach = Math.max.apply(null, order.map(function (o) { return o.d; })) + L.inr * 2.2;
-      var rt = easeOutCubic(animT);
-      g.beginPath();
-      g.arc(mx, my, L.inr + reach * rt, 0, Math.PI * 2);
-      g.globalAlpha = 0.55 * (1 - animT);
-      g.lineWidth = Math.max(1.5, L.inr * 0.5 * (1 - animT));
-      g.strokeStyle = acol;
-      g.stroke();
-      g.globalAlpha = 1;
     } else if (anim) {
       anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player)); });
     }
@@ -659,7 +649,7 @@
     var p = JSON.parse(JSON.stringify(DEFAULT_PREFS));
     var saved = load(STORE_PREFS);
     if (!saved || typeof saved !== 'object') return p;
-    if (Engine.isMode(saved.mode)) p.mode = saved.mode;
+    // 棋盘不记忆：每次打开网站都从标准棋盘开始（本次访问内切换会保留）
     if (saved.tab === 'online') p.tab = 'online';
     if (typeof saved.nick === 'string') p.nick = Online.cleanName(saved.nick);
     MODE_LIST.forEach(function (m) {
@@ -1442,6 +1432,8 @@
     }
     prepareView(!sameGame);
     if (!sameGame) playEntrance();
+    // 新开的一局记一次游玩（联机由房主记，接着上局、回放不记）
+    if (!sameGame && !(actions && actions.length) && (mode === 'local' || (online && online.room && online.room.host === myId()))) countPlay();
     game.seenGameId = gameId || null;
     saveGame();
     onTurnStart(true);
@@ -2902,6 +2894,61 @@
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
   }
 
+  /* ================= 全站游玩次数 ================= */
+
+  // 自建服务器：服务器累计；Claude 发布的页面：每位访客在 plays/<自己的 id> 记自己的次数，首页显示所有人之和
+  var plays = { total: null, kind: null, mine: 0, db: null, uid: null };
+
+  function initPlays() {
+    ensureNet().then(function (r) {
+      var net = r && r.net;
+      if (net && net.kind === 'server') {
+        plays.kind = 'server';
+        fetch('api/stats', { cache: 'no-store' }).then(function (res) { return res.ok ? res.json() : null; }).then(function (d) {
+          if (d && typeof d.plays === 'number') { plays.total = d.plays; renderPlays(); }
+        }, function () {});
+      } else if (net && net.kind === 'artifact' && inClaudePage()) {
+        Promise.all([window.claude.use('db'), window.claude.use('user')]).then(function (caps) {
+          var db = caps[0], user = caps[1];
+          if (!db) return;
+          plays.db = db;
+          plays.kind = 'artifact';
+          db.collection('plays').onSnapshot(function (snap) {
+            var sum = 0;
+            snap.docs.forEach(function (d) {
+              var n = d.exists && d.data() ? d.data().n : 0;
+              if (typeof n === 'number' && isFinite(n) && n > 0) sum += Math.floor(n);
+              if (d.id === plays.uid) plays.mine = typeof n === 'number' ? n : 0;
+            });
+            plays.total = sum;
+            renderPlays();
+          }, function () {});
+          if (user && user.id) Promise.resolve(user.id()).then(function (id) { plays.uid = id || null; }, function () {});
+        }, function () {});
+      }
+    });
+  }
+
+  function countPlay() {
+    if (plays.kind === 'server') {
+      fetch('api/stats/play', { method: 'POST' }).then(function (res) { return res.ok ? res.json() : null; }).then(function (d) {
+        if (d && typeof d.plays === 'number') { plays.total = d.plays; renderPlays(); }
+      }, function () {});
+    } else if (plays.kind === 'artifact' && plays.db && plays.uid) {
+      plays.mine += 1;
+      plays.db.doc('plays/' + plays.uid).set({ n: plays.mine }).catch(function () { plays.mine -= 1; });
+    }
+  }
+
+  function renderPlays() {
+    var el = $('play-count');
+    if (plays.total === null) { el.hidden = true; return; }
+    var num = plays.total.toLocaleString(I18n.lang());
+    el.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2" opacity=".45"/></svg>' +
+      th('stats.plays', { n: plays.total, count: num });
+    el.hidden = false;
+  }
+
   /* ================= 界面语言 ================= */
 
   // 没选过语言时按浏览器语言自动选择（都不支持就用英文）
@@ -2950,6 +2997,7 @@
     if (!$('setup').hidden) {
       renderSetup();
       buildModeSeg();
+      renderPlays();
       if (demo.mode) $('demo-label').innerHTML = modeIcon(demo.mode) + '<b>' + escapeHtml(modeLabel(demo.mode)) + '</b>';
     }
     if (!$('lobby').hidden) renderLobby();
@@ -4099,6 +4147,7 @@
   bindKeys();
   showScreen('setup');
   ensureNet();
+  initPlays();
   claudeSample();
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function () {

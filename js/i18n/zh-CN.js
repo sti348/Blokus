@@ -47,6 +47,7 @@
     'setup.seats': '座位',
     'setup.seatsOrder': '按行棋顺序',
     'setup.count': '参战人数',
+    'stats.plays.other': '全站已玩 <b>{count}</b> 局',
     'setup.start': '开始对局',
     'setup.resume': '继续上局',
     'setup.records': '对局记录',

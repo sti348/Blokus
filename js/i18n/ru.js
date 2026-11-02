@@ -47,6 +47,7 @@
     'setup.seats': 'Места',
     'setup.seatsOrder': 'в порядке хода',
     'setup.count': 'Число игроков',
+    'stats.plays.other': 'Сыграно партий: <b>{count}</b>',
     'setup.start': 'Начать игру',
     'setup.resume': 'Продолжить последнюю игру',
     'setup.records': 'Записи партий',
