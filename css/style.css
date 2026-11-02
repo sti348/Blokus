@@ -1330,3 +1330,23 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
 @media (max-width: 900px) {
   .play-count { position: static; justify-self: end; margin-top: 4px; }
 }
+
+/* ================= 游戏平台（CrazyGames） ================= */
+
+/* 每局结束请求广告时挡住界面；广告真正播放时再压暗 */
+.ad-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  cursor: progress;
+  background: transparent;
+  transition: background-color 0.25s ease;
+}
+.ad-shield[hidden] { display: none; }
+.ad-shield.playing { background: rgba(8, 12, 20, 0.55); }
+
+/* CrazyGames 版本没有联机服务器：不显示「本地 / 联机」切换 */
+.on-crazygames .panel-top .tabs { visibility: hidden; }
+@media (max-width: 560px) {
+  .on-crazygames .panel-top .tabs { display: none; }
+}

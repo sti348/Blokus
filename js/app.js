@@ -1,7 +1,12 @@
 /*
  * 角斗士棋界面：开局设置、联机房间、棋盘绘制（方格 / 三角格）、人机交互、电脑回合调度、存档。
  */
-(function () {
+// 先等游戏平台（CrazyGames SDK）初始化好再启动；不在平台上时立即启动
+(function (start) {
+  var P = window.BlokusPlatform;
+  if (P) P.init().then(start, start);
+  else start();
+})(function () {
   'use strict';
 
   var Pieces = BlokusPieces;
@@ -26,6 +31,19 @@
   var STORE_LLM = 'blokus.llm.v1';
   var STORE_RECORDS = 'blokus.records.v1';
   var STORE_TOURS = 'blokus.tours.v1';
+  var Platform = window.BlokusPlatform || {
+    gameplay: function () {}, muted: function () { return false; }, locale: function () { return null; },
+    endOfGameAd: function () { return Promise.resolve('none'); }, happytime: function () {}, loaded: function () {},
+    store: function () { try { return window.localStorage; } catch (e) { return null; } },
+    crazyGames: false, active: false
+  };
+  // 只存在这台设备上的键：大模型密钥、联机身份和房间；其余（偏好、引导、记录、未下完的局）在游戏平台上随账号同步
+  var DEVICE_ONLY = {};
+  DEVICE_ONLY[STORE_LLM] = DEVICE_ONLY[STORE_TOKENS] = DEVICE_ONLY[STORE_ONLINE] = true;
+  function storeFor(key) {
+    if (DEVICE_ONLY[key]) { try { return window.localStorage; } catch (e) { return null; } }
+    return Platform.store();
+  }
   var RECORD_LIMIT = 60;
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
@@ -49,12 +67,13 @@
   function $(id) { return document.getElementById(id); }
 
   function load(key) {
-    try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+    try { return JSON.parse(storeFor(key).getItem(key)); } catch (e) { return null; }
   }
   function save(key, value) {
     try {
-      if (value === null) localStorage.removeItem(key);
-      else localStorage.setItem(key, JSON.stringify(value));
+      var st = storeFor(key);
+      if (value === null) st.removeItem(key);
+      else st.setItem(key, JSON.stringify(value));
     } catch (e) { /* 存储不可用时忽略 */ }
   }
 
@@ -635,7 +654,7 @@
   }
 
   function sound(kind, quiet) {
-    if (!prefs.sound || !audio || audio.state !== 'running') return;
+    if (!prefs.sound || Platform.muted() || !audio || audio.state !== 'running') return;
     var t = audio.currentTime;
     var k = quiet ? 0.5 : 1;
     function tone(freq, start, dur, type, gain) {
@@ -1435,6 +1454,7 @@
         closeDialog('tour');
       }
     }
+    syncGameplay();
     if (name === 'setup') {
       renderSetup();
       startDemo();
@@ -1561,7 +1581,10 @@
     if (st.over) {
       saveGame();
       clearTimeout(game.endTimer);
-      game.endTimer = setTimeout(function () { showEnd(); }, first ? 0 : 700);
+      syncGameplay();
+      if (first) game.endTimer = setTimeout(function () { showEnd(); }, 0);
+      // 刚下完的一局：先让最后一步落定、看一眼终局，再放平台的插页广告（只在这里放），之后弹结算
+      else game.endTimer = setTimeout(function () { endOfGameAd().then(function () { showEnd(); }, function () {}); }, Platform.active ? 900 : 700);
       return;
     }
     var pl = cur();
@@ -2246,7 +2269,13 @@
     online.net.preview(online.pvWant);
   }
 
+  // 告诉游戏平台对局是否正在进行（开局、继续时开始；结束、回到菜单、暂停、看引导、回放时停止）
+  function syncGameplay() {
+    Platform.gameplay(!$('game').hidden && game.mode !== 'replay' && !!game.state && !game.state.over && !game.paused && !game.touring);
+  }
+
   function renderGame() {
+    syncGameplay();
     if (!game.state || $('game').hidden) return;
     renderTurn();
     renderPlayers();
@@ -2526,6 +2555,21 @@
     if (confirmResolve) { var r = confirmResolve; confirmResolve = null; r(ok); }
   }
 
+  // 每局结束时的广告：请求期间挡住界面（不可操作），广告真正开始后再静音；没有广告、出错、被拦截时直接继续
+  function endOfGameAd() {
+    if (!Platform.active) return Promise.resolve();
+    var shield = $('ad-shield');
+    var st = game.state;
+    shield.hidden = false;
+    return Platform.endOfGameAd({
+      started: function () { shield.classList.add('playing'); }
+    }).then(function () {
+      shield.hidden = true;
+      shield.classList.remove('playing');
+      if (game.state !== st || $('game').hidden) throw new Error('left');
+    });
+  }
+
   function showEnd(reopen) {
     var st = game.state;
     if (!st || !st.over) return;
@@ -2563,6 +2607,7 @@
       sound('win');
       var myWin = mine.length === 1 && mine[0].rank === 1 && (isOnlineGame() || humanCount() === 1);
       if (myWin) setTimeout(function () { confetti(colorVar(mine[0].player)); }, 280);
+      if (myWin) Platform.happytime();
     }
   }
 
@@ -2633,7 +2678,7 @@
 
   function storeRecords(list) {
     try {
-      localStorage.setItem(STORE_RECORDS, JSON.stringify(list));
+      storeFor(STORE_RECORDS).setItem(STORE_RECORDS, JSON.stringify(list));
       return true;
     } catch (e) {
       return false;
@@ -2989,7 +3034,9 @@
 
   // 没选过语言时按浏览器语言自动选择（都不支持就用英文）
   function initLang() {
-    var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+    // 在游戏平台上用平台给的语言（平台要求），否则用浏览器语言
+    var platformLang = Platform.locale();
+    var langs = platformLang ? [platformLang] : navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
     I18n.setLang(prefs.lang || I18n.detect(langs));
   }
 
@@ -3083,6 +3130,7 @@
     // 本地电脑等引导结束再走
     game.touring = true;
     cancelAI();
+    syncGameplay();
     var me = myPlayers()[0] || cur();
     $('tour').style.setProperty('--tc', colorVar(me));
     openDialog('tour');
@@ -3286,6 +3334,13 @@
   var netInfo = { ready: false, net: null, reason: null, promise: null };
 
   function ensureNet() {
+    // CrazyGames 版本是静态托管，没有联机服务器，也不去探测
+    if (!netInfo.promise && Platform.crazyGames) {
+      netInfo.ready = true;
+      netInfo.net = null;
+      netInfo.reason = 'static';
+      netInfo.promise = Promise.resolve({ net: null, reason: 'static' });
+    }
     if (!netInfo.promise) {
       netInfo.promise = Net.detect().then(function (r) {
         netInfo.ready = true;
@@ -3770,7 +3825,7 @@
 
   function bindKeys() {
     document.addEventListener('keydown', function (e) {
-      if ($('game').hidden || anyDialogOpen() || !game.state) return;
+      if ($('game').hidden || anyDialogOpen() || !game.state || !$('ad-shield').hidden) return;
       var tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       var key = e.key;
@@ -4167,6 +4222,7 @@
 
   /* ================= 启动 ================= */
 
+  if (Platform.crazyGames) document.documentElement.classList.add('on-crazygames');
   initLang();
   applyI18n();
   buildModeSeg();
@@ -4191,4 +4247,5 @@
       moveThumb($('mode-seg'), true);
     });
   }
-})();
+  Platform.loaded();
+});
