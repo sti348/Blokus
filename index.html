@@ -22,6 +22,7 @@
         <canvas id="demo-board" data-i18n-attr="aria-label:demo.aria" aria-label="AI self-play demo"></canvas>
         <span class="demo-label" id="demo-label"></span>
       </div>
+      <p class="hero-note" id="mode-note"></p>
     </div>
 
     <div class="setup-panel">
@@ -30,15 +31,19 @@
           <button type="button" role="tab" class="tab" id="tab-local" aria-controls="local-panel" aria-selected="true" data-i18n="setup.tab.local">Local game</button>
           <button type="button" role="tab" class="tab" id="tab-online" aria-controls="online-panel" aria-selected="false" data-i18n="setup.tab.online">Online</button>
         </div>
-        <label class="lang-pick" data-i18n-attr="title:lang.label" title="Language">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
-          <select id="lang-select" data-i18n-attr="aria-label:lang.label" aria-label="Language"></select>
-        </label>
+        <div class="panel-tools">
+          <label class="icon-toggle" data-i18n-attr="title:opt.sound" title="Sound"><input type="checkbox" id="opt-sound" checked data-i18n-attr="aria-label:opt.sound" aria-label="Sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6"/><path class="wave" d="M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></label>
+          <label class="icon-toggle" data-i18n-attr="title:opt.dark" title="Dark theme"><input type="checkbox" id="opt-dark" data-i18n-attr="aria-label:opt.dark" aria-label="Dark theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></svg></label>
+          <label class="lang-pick" data-i18n-attr="title:lang.label" title="Language">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>
+            <select id="lang-select" data-i18n-attr="aria-label:lang.label" aria-label="Language"></select>
+          </label>
+        </div>
       </div>
 
       <div class="field">
         <span class="field-label" data-i18n="setup.board">Board</span>
-        <div class="seg" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board">
+        <div class="seg modes" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board">
           <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span data-i18n="mode.classic">Classic 20×20</span></label>
           <label><input type="radio" name="mode" id="mode-duo" value="duo"><span data-i18n="mode.duo">Duo 14×14</span></label>
           <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span data-i18n="mode.trigon">Triangles</span></label>
@@ -46,24 +51,25 @@
           <label><input type="radio" name="mode" id="mode-cube" value="cube"><span data-i18n="mode.cube">3D Cubes</span></label>
           <label><input type="radio" name="mode" id="mode-prism" value="prism"><span data-i18n="mode.prism">Prisms</span></label>
         </div>
-        <p class="field-note" id="mode-note"></p>
       </div>
 
+      <div class="panel-stack">
       <form id="local-panel" class="panel-body" role="tabpanel" aria-labelledby="tab-local" autocomplete="off">
-        <div class="field">
+        <div class="field presets-field">
           <span class="field-label" data-i18n="setup.presets">Quick start</span>
           <div class="presets" id="presets"></div>
         </div>
 
         <div class="field">
-          <span class="field-label"><span data-i18n="setup.seats">Seats</span> <small data-i18n="setup.seatsOrder">in turn order</small></span>
+          <div class="field-head">
+            <span class="field-label"><span data-i18n="setup.seats">Seats</span> <small data-i18n="setup.seatsOrder">in turn order</small></span>
+            <div class="seg small count-seg" id="count-seg" role="radiogroup" data-i18n-attr="aria-label:setup.count" aria-label="Number of players"></div>
+          </div>
           <ol class="seats" id="seats"></ol>
         </div>
 
         <div class="field options">
           <label class="check"><input type="checkbox" id="opt-hints" checked><span data-i18n="opt.hints">Show corner hints</span></label>
-          <label class="check"><input type="checkbox" id="opt-sound" checked><span data-i18n="opt.sound">Sound</span></label>
-          <label class="check"><input type="checkbox" id="opt-dark"><span data-i18n="opt.dark">Dark theme</span></label>
           <label class="inline-select"><span data-i18n="opt.speed">AI speed</span>
             <select id="opt-speed">
               <option value="fast" data-i18n="speed.fast">Fast</option>
@@ -71,7 +77,6 @@
               <option value="slow" data-i18n="speed.slow">Slow</option>
             </select>
           </label>
-          <button type="button" class="btn ghost small llm-open" id="llm-open" data-i18n="llm.open">LLM settings…</button>
         </div>
 
         <p class="form-error" id="setup-error" role="alert" hidden></p>
@@ -84,7 +89,7 @@
         </div>
       </form>
 
-      <div id="online-panel" class="panel-body" role="tabpanel" aria-labelledby="tab-online" hidden>
+      <div id="online-panel" class="panel-body inactive" role="tabpanel" aria-labelledby="tab-online">
         <div class="field">
           <label class="field-label" for="nick" data-i18n="online.nick">Your nickname</label>
           <input type="text" id="nick" maxlength="12" data-i18n-attr="placeholder:player.default" placeholder="Player" autocomplete="nickname">
@@ -110,6 +115,7 @@
           <button type="button" class="btn ghost rules-open" data-i18n="setup.rules">How to play</button>
         </div>
       </div>
+      </div>
     </div>
   </section>
 
@@ -132,7 +138,10 @@
           <div class="seg" id="lobby-mode" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board"></div>
         </div>
         <div class="field">
-          <span class="field-label"><span data-i18n="setup.seats">Seats</span> <small data-i18n="setup.seatsOrder">in turn order</small></span>
+          <div class="field-head">
+            <span class="field-label"><span data-i18n="setup.seats">Seats</span> <small data-i18n="setup.seatsOrder">in turn order</small></span>
+            <div class="seg small count-seg" id="lobby-count" role="radiogroup" data-i18n-attr="aria-label:setup.count" aria-label="Number of players"></div>
+          </div>
           <ol class="seats" id="lobby-seats"></ol>
         </div>
         <div class="field options">

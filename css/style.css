@@ -55,6 +55,9 @@
 [hidden] { display: none !important; }
 
 html, body { height: 100%; }
+/* 不让拖动或长按选中文字（输入框除外） */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+input, textarea, select { -webkit-user-select: text; user-select: text; }
 body {
   margin: 0;
   background: var(--bg);
@@ -175,10 +178,10 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
   max-width: 1180px;
   margin: 0 auto;
   min-height: 100%;
-  padding-block: 32px;
+  padding-block: 10px;
 }
 
-.setup-hero { display: grid; gap: 14px; justify-items: center; }
+.setup-hero { display: grid; gap: 12px; justify-items: center; }
 
 .logo {
   margin: 0;
@@ -204,7 +207,8 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 
 .demo-frame {
   position: relative;
-  width: min(100%, 440px);
+  width: min(100%, 440px, calc(100vh - 300px));
+  min-width: min(100%, 240px);
   aspect-ratio: 1;
 }
 .demo-frame canvas { width: 100%; height: 100%; display: block; }
@@ -219,15 +223,19 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 
 .setup-panel {
   display: grid;
-  gap: 20px;
-  padding: 24px;
+  gap: 12px;
+  padding: 18px 20px 20px;
   border-radius: var(--r-lg);
   background: var(--raised);
   box-shadow: var(--shadow);
   min-width: 0;
 }
 
-.field { display: grid; gap: 8px; min-width: 0; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; }
+.count-seg span { min-width: 2.2em; text-align: center; font-family: var(--font-num); }
+.hero-note { margin: 18px 0 0; max-width: 440px; min-height: 4.4em; color: var(--ink-soft); font-size: 13px; line-height: 1.5; text-align: center; text-wrap: pretty; }
+.seg.modes span { padding: 5px 10px; font-size: 13.5px; }
 .field-label {
   font-size: 12px;
   font-weight: 600;
@@ -236,8 +244,9 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 }
 .field-label small { font-weight: 400; letter-spacing: .04em; margin-left: 6px; }
 
-.presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.presets .btn { min-height: 32px; padding: 0 11px; font-size: 13px; }
+.presets-field { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
+.presets .btn { min-height: 30px; padding: 0 10px; font-size: 13px; }
 .presets .btn.active { border-color: var(--ink); background: var(--surface); }
 
 .seats { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -278,7 +287,34 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .inline-select { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .inline-select input { width: 9em; }
 
-.form-error { margin: 0; color: var(--danger); font-weight: 500; }
+.form-error { margin: 0; color: var(--danger); font-weight: 500; font-size: 13px; }
+
+/* 本地 / 联机两个面板叠在同一格：高度取较高的那个，切换时只淡入淡出内容 */
+.panel-stack { display: grid; }
+.panel-stack > .panel-body { grid-area: 1 / 1; align-content: start; transition: opacity .18s ease, visibility .18s; }
+.panel-stack > .panel-body.inactive { opacity: 0; visibility: hidden; }
+
+/* 开局页面的座位：一行一个，行高固定；人多（宝石阵 6 方）时两列 */
+#seats { min-height: calc(var(--rows, 4) * 42px + (var(--rows, 4) - 1) * 6px); align-content: start; gap: 6px; }
+#seats .seat {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-areas: "sw main type";
+  height: 42px;
+  padding: 4px 6px 4px 4px;
+  column-gap: 8px;
+  animation: seat-in .18s ease;
+}
+#seats .seat-swatch { min-height: 0; font-size: 15px; }
+#seats.cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#seats.cols2 .seat { grid-template-columns: 26px minmax(0, 1fr) auto; column-gap: 6px; }
+#seats.cols2 .seat-type span { padding: 4px 7px; font-size: 12.5px; }
+#seats .seat-llm { min-width: 32px; min-height: 32px; padding: 0 6px; }
+#seats .seat-llm svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.seat-main { grid-area: main; min-width: 0; display: flex; }
+.seat-main .seat-name { width: 100%; min-height: 32px; padding: 4px 9px; }
+.seat-ai { display: flex; gap: 6px; min-width: 0; width: 100%; }
+.seat-ai select { min-width: 0; flex: 1; min-height: 32px; padding: 3px 6px; }
+@keyframes seat-in { from { opacity: 0; transform: translateY(-3px); } }
 
 .setup-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
@@ -810,11 +846,13 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .join-row { display: flex; gap: 6px; }
 .join-row input {
   flex: 1;
+  min-width: 0;
   font-family: var(--font-num);
   font-size: 18px;
   letter-spacing: .2em;
   text-transform: uppercase;
 }
+.join-row input::placeholder { font-family: var(--font-ui); font-size: 14px; letter-spacing: normal; text-transform: none; }
 .online-note { margin: 0; color: var(--ink-soft); font-size: 13px; max-width: 60ch; }
 .online-note code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: var(--surface); padding: 1px 5px; border-radius: 4px; }
 
@@ -967,12 +1005,31 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .logo.words { font-size: clamp(48px, 7vw, 88px); letter-spacing: .01em; flex-wrap: wrap; }
 .panel-top { display: flex; align-items: flex-end; gap: 12px; }
 .panel-top .tabs { flex: 1; min-width: 0; }
+.panel-tools { flex: none; display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.icon-toggle {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.icon-toggle:hover { background: var(--surface); color: var(--ink); }
+.icon-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.icon-toggle svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.icon-toggle input:checked + svg { color: var(--ink); }
+.icon-toggle input:focus-visible + svg { outline: 2px solid var(--ink); outline-offset: 4px; border-radius: 4px; }
+.icon-toggle .mute { display: none; }
+.icon-toggle input:not(:checked) + svg .wave { display: none; }
+.icon-toggle input:not(:checked) + svg .mute { display: inline; }
 .lang-pick {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 6px;
+  margin-left: 4px;
   color: var(--ink-soft);
 }
 .lang-pick svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
@@ -1062,4 +1119,22 @@ dialog.tour.dim { background: rgba(12, 14, 20, .55); }
 @media (max-width: 720px) {
   .tour-title { font-size: 20px; }
   .tour-dg svg { height: 76px; }
+}
+
+/* 拉丁、西里尔文字：小标题用大写字母，标题用 Rubik，字距收紧 */
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .field-label { text-transform: uppercase; letter-spacing: .07em; font-size: 11px; }
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .field-label small { text-transform: none; letter-spacing: normal; font-size: 11.5px; }
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .dialog-title,
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .tour-title { font-family: var(--font-num); font-weight: 600; letter-spacing: -.01em; }
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .dialog-title { font-size: 26px; }
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .tour-title { font-size: 21px; }
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .tagline,
+:root:not(:lang(zh-CN)):not(:lang(zh-TW)):not(:lang(ja)):not(:lang(ko)) .demo-label { letter-spacing: .01em; }
+
+@media (max-width: 560px) {
+  .panel-top { flex-wrap: wrap; }
+  .panel-tools { margin-left: auto; margin-bottom: 0; }
+  .panel-top .tabs { order: 2; flex-basis: 100%; }
+  .presets-field { grid-template-columns: minmax(0, 1fr); }
+  .presets .btn { flex: 1 1 auto; }
 }

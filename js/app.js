@@ -605,6 +605,8 @@
     tab: 'local',
     nick: '',
     seats: { classic: defaultSeats(4), duo: defaultSeats(2), trigon: defaultSeats(4), gemblo: defaultSeats(6), cube: defaultSeats(4), prism: defaultSeats(4) },
+    // 每种棋盘的参战人数：用前 n 个座位
+    counts: { classic: 4, duo: 2, trigon: 4, gemblo: 6, cube: 4, prism: 4 },
     hints: true,
     sound: true,
     speed: 'normal',
@@ -622,14 +624,20 @@
     MODE_LIST.forEach(function (m) {
       var list = saved.seats && saved.seats[m];
       if (!Array.isArray(list)) return;
-      p.seats[m].forEach(function (seat, i) {
-        var s = list[i];
-        if (!s) return;
-        if (['human', 'ai', 'off'].indexOf(s.type) >= 0 && !(m === 'duo' && s.type === 'off')) seat.type = s.type;
+      // 旧版的“空位”：去掉空位，其余座位往前排，人数等于剩下的座位数
+      var used = list.filter(function (s) { return s && s.type !== 'off'; });
+      var rest = list.filter(function (s) { return s && s.type === 'off'; });
+      used.concat(rest).forEach(function (s, i) {
+        var seat = p.seats[m][i];
+        if (!seat) return;
+        if (s.type === 'human' || s.type === 'ai') seat.type = s.type;
         if (LEVELS.indexOf(s.level) >= 0) seat.level = s.level;
         if (typeof s.name === 'string') seat.name = s.name.slice(0, 12);
         if (typeof s.model === 'string') seat.model = LLM.profileName(s.model);
       });
+      var n = saved.counts && saved.counts[m];
+      if (!Engine.validCount(m, n) && rest.length) n = used.length;
+      if (Engine.validCount(m, n)) p.counts[m] = n;
     });
     if (typeof saved.hints === 'boolean') p.hints = saved.hints;
     if (typeof saved.sound === 'boolean') p.sound = saved.sound;
@@ -642,32 +650,26 @@
   var prefs = loadPrefs();
   function savePrefs() { save(STORE_PREFS, prefs); }
 
-  var FOUR_PRESETS = [
-    ['human', 'ai', 'ai', 'ai'],
-    ['human', 'ai', 'human', 'ai'],
-    ['human', 'human', 'human', 'ai'],
-    ['human', 'human', 'human', 'human'],
-    ['ai', 'ai', 'ai', 'ai']
-  ];
-  var PRESETS = {
-    classic: FOUR_PRESETS,
-    trigon: FOUR_PRESETS,
-    cube: FOUR_PRESETS,
-    prism: FOUR_PRESETS,
-    gemblo: [
-      ['human', 'ai', 'ai', 'ai', 'ai', 'ai'],
-      ['human', 'ai', 'ai', 'ai', 'off', 'off'],
-      ['human', 'ai', 'ai', 'off', 'off', 'off'],
-      ['human', 'ai', 'human', 'ai', 'human', 'ai'],
-      ['human', 'human', 'human', 'human', 'human', 'human'],
-      ['ai', 'ai', 'ai', 'ai', 'ai', 'ai']
-    ],
-    duo: [
-      ['human', 'ai'],
-      ['human', 'human'],
-      ['ai', 'ai']
-    ]
-  };
+  function countOptions(mode) {
+    var out = [];
+    for (var n = 2; n <= Engine.MODES[mode].seats.length; n++) if (Engine.validCount(mode, n)) out.push(n);
+    return out;
+  }
+
+  function seatCount(mode) {
+    var n = prefs.counts[mode];
+    return Engine.validCount(mode, n) ? n : countOptions(mode).slice(-1)[0];
+  }
+
+  // n 个座位的快速开局：1、2、3 个人类玩家（人类尽量隔开坐）、全是人类、全是电脑
+  function presetsFor(n) {
+    var hs = [1, 2, 3, n, 0].filter(function (h, i, a) { return h <= n && a.indexOf(h) === i; });
+    return hs.map(function (h) {
+      var types = [];
+      for (var i = 0; i < n; i++) types.push(Math.ceil((i + 1) * h / n) > Math.ceil(i * h / n) ? 'human' : 'ai');
+      return types;
+    });
+  }
 
   function presetLabel(types) {
     var h = types.filter(function (x) { return x === 'human'; }).length;
@@ -678,10 +680,8 @@
     return t('preset.mix', { n: h, a: a });
   }
 
-  function seatTypeOptions(mode) {
-    var opts = [['human', t('seat.human')], ['ai', t('seat.ai')]];
-    if (mode !== 'duo') opts.push(['off', t('seat.off')]);
-    return opts;
+  function seatTypeOptions() {
+    return [['human', t('seat.human')], ['ai', t('seat.ai')]];
   }
 
   function renderSetup() {
@@ -692,91 +692,61 @@
     $('opt-sound').checked = prefs.sound;
     $('opt-speed').value = prefs.speed;
     $('opt-dark').checked = prefs.theme === 'dark';
+    // 本地 / 联机两个面板叠在同一格里，切换只换内容，不改变高度
     var onlineTab = prefs.tab === 'online';
     $('tab-local').setAttribute('aria-selected', onlineTab ? 'false' : 'true');
     $('tab-online').setAttribute('aria-selected', onlineTab ? 'true' : 'false');
-    $('local-panel').hidden = onlineTab;
-    $('online-panel').hidden = !onlineTab;
-
-    var presets = $('presets');
-    presets.innerHTML = '';
-    PRESETS[mode].forEach(function (pr, k) {
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'btn';
-      b.id = 'preset-' + mode + '-' + k;
-      b.textContent = presetLabel(pr);
-      var seats = prefs.seats[mode];
-      if (pr.every(function (type, i) { return seats[i].type === type; })) b.classList.add('active');
-      b.addEventListener('click', function () {
-        pr.forEach(function (type, i) { seats[i].type = type; });
-        savePrefs();
-        renderSetup();
-      });
-      presets.appendChild(b);
+    [['local-panel', !onlineTab], ['online-panel', onlineTab]].forEach(function (x) {
+      var el = $(x[0]);
+      el.classList.toggle('inactive', !x[1]);
+      el.inert = !x[1];
+      el.setAttribute('aria-hidden', x[1] ? 'false' : 'true');
     });
+
+    var n = seatCount(mode);
+    var opts = countOptions(mode);
+    var countSeg = $('count-seg');
+    countSeg.hidden = opts.length < 2;
+    countSeg.innerHTML = opts.map(function (c) {
+      return '<label><input type="radio" name="seat-count" id="seat-count-' + c + '" value="' + c + '"' + (c === n ? ' checked' : '') + '><span>' + c + '</span></label>';
+    }).join('');
+
+    var seats = prefs.seats[mode];
+    $('presets').innerHTML = presetsFor(n).map(function (types, k) {
+      var active = types.every(function (type, i) { return seats[i].type === type; });
+      return '<button type="button" class="btn' + (active ? ' active' : '') + '" data-preset="' + k + '">' + escapeHtml(presetLabel(types)) + '</button>';
+    }).join('');
 
     var list = $('seats');
-    list.innerHTML = '';
+    list.classList.toggle('cols2', n > 4);
+    list.style.setProperty('--rows', n > 4 ? Math.ceil(n / 2) : 4);
     var humanNo = 0;
-    var humans = prefs.seats[mode].filter(function (s) { return s.type === 'human'; }).length;
-    Engine.MODES[mode].seats.forEach(function (seat, i) {
-      var s = prefs.seats[mode][i];
-      var li = document.createElement('li');
-      li.className = 'seat' + (s.type === 'off' ? ' off' : '');
-      li.style.setProperty('--c', 'var(--p-' + seat.color + ')');
-      if (s.type === 'human') humanNo++;
+    var humans = seats.slice(0, n).filter(function (s) { return s.type === 'human'; }).length;
+    list.innerHTML = Engine.MODES[mode].seats.slice(0, n).map(function (seat, i) {
+      var s = seats[i];
+      var human = s.type === 'human';
+      if (human) humanNo++;
       var color = colorName(seat.color);
-      var placeholder = s.type === 'human' ? (humans === 1 ? t('seat.you') : t('seat.player', { n: humanNo })) : s.type === 'ai' ? t('seat.aiName', { color: color }) : t('seat.off');
-      var typeRadios = seatTypeOptions(mode).map(function (o) {
-        return '<label><input type="radio" name="seat-type-' + i + '" id="seat-type-' + i + '-' + o[0] + '" value="' + o[0] + '"' +
+      var typeRadios = seatTypeOptions().map(function (o) {
+        return '<label><input type="radio" name="seat-type-' + i + '" id="seat-type-' + i + '-' + o[0] + '" value="' + o[0] + '" data-seat="' + i + '"' +
           (s.type === o[0] ? ' checked' : '') + '><span>' + escapeHtml(o[1]) + '</span></label>';
       }).join('');
-      var levelRadios = LEVELS.map(function (lv) {
-        return '<label><input type="radio" name="seat-level-' + i + '" id="seat-level-' + i + '-' + lv + '" value="' + lv + '"' +
-          (s.level === lv ? ' checked' : '') + '><span>' + escapeHtml(levelLabel(lv)) + '</span></label>';
-      }).join('');
-      li.innerHTML =
+      // 一行：玩家填名字，电脑选难度（大模型再选配置），行高不变
+      var main = human
+        ? '<input type="text" class="seat-name" id="seat-name-' + i + '" data-seat="' + i + '" maxlength="12" aria-label="' + th('seat.nameAria', { color: color }) + '"' +
+          ' placeholder="' + escapeHtml(humans === 1 ? t('seat.you') : t('seat.player', { n: humanNo })) + '" value="' + escapeHtml(s.name) + '">'
+        : '<span class="seat-ai"><select class="seat-level-sel" id="seat-level-' + i + '" data-seat="' + i + '" aria-label="' + th('seat.levelAria') + ' · ' + escapeHtml(t('seat.aiName', { color: color })) + '">' +
+          LEVELS.map(function (lv) { return '<option value="' + lv + '"' + (s.level === lv ? ' selected' : '') + '>' + escapeHtml(levelLabel(lv)) + '</option>'; }).join('') +
+          '</select>' +
+          (s.level === 'llm' ? '<select class="seat-model-sel" id="seat-model-' + i + '" data-seat="' + i + '" aria-label="' + th('seat.modelAria', { color: color }) + '">' + profileOptions(s.model) + '</select>' +
+            '<button type="button" class="btn icon seat-llm" data-llm="' + i + '" title="' + th('llm.open') + '" aria-label="' + th('llm.open') + '"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>' : '') +
+          '</span>';
+      return '<li class="seat" style="--c: var(--p-' + seat.color + ')">' +
         '<span class="seat-swatch" aria-hidden="true">' + escapeHtml(t('colorShort.' + seat.color)) + '</span>' +
-        '<input type="text" class="seat-name" id="seat-name-' + i + '" maxlength="12" aria-label="' + th('seat.nameAria', { color: color }) + '"' +
-        ' placeholder="' + escapeHtml(placeholder) + '" value="' + (s.type === 'human' ? escapeHtml(s.name) : '') + '"' + (s.type === 'human' ? '' : ' disabled') + '>' +
+        '<div class="seat-main">' + main + '</div>' +
         '<div class="seg small seat-type" role="radiogroup" aria-label="' + th('seat.typeAria', { color: color }) + '">' + typeRadios + '</div>' +
-        '<div class="seat-level"' + (s.type === 'ai' ? '' : ' hidden') + '>' + th('seat.level') + ' <div class="seg small" role="radiogroup" aria-label="' + th('seat.levelAria') + '">' + levelRadios + '</div>' +
-        (s.level === 'llm' ? '<label class="seat-model">' + th('seat.model') + ' <select id="seat-model-' + i + '" aria-label="' + th('seat.modelAria', { color: color }) + '">' + profileOptions(s.model) + '</select></label>' : '') +
-        '</div>';
-      li.querySelector('.seat-name').addEventListener('input', function (e) {
-        s.name = e.target.value;
-        savePrefs();
-      });
-      li.querySelectorAll('input[name="seat-type-' + i + '"]').forEach(function (r) {
-        r.addEventListener('change', function () {
-          s.type = r.value;
-          savePrefs();
-          renderSetup();
-          var again = $('seat-type-' + i + '-' + r.value);
-          if (again) again.focus();
-        });
-      });
-      li.querySelectorAll('input[name="seat-level-' + i + '"]').forEach(function (r) {
-        r.addEventListener('change', function () {
-          s.level = r.value;
-          savePrefs();
-          renderSetup();
-          var again = $('seat-level-' + i + '-' + r.value);
-          if (again) again.focus();
-          if (r.value === 'llm') ensureLLMSetup(s.model);
-        });
-      });
-      var modelSel = li.querySelector('#seat-model-' + i);
-      if (modelSel) {
-        modelSel.addEventListener('change', function () {
-          s.model = modelSel.value;
-          savePrefs();
-          ensureLLMSetup(s.model);
-        });
-      }
-      list.appendChild(li);
-    });
+        '</li>';
+    }).join('');
 
     $('setup-error').hidden = true;
     $('resume-btn').hidden = !loadSaved();
@@ -785,13 +755,13 @@
 
   function buildLocalConfig() {
     var mode = prefs.mode;
-    var seats = prefs.seats[mode];
+    var n = seatCount(mode);
+    var seats = prefs.seats[mode].slice(0, n);
     var humans = seats.filter(function (s) { return s.type === 'human'; }).length;
     var entries = [];
     var humanNo = 0;
-    Engine.MODES[mode].seats.forEach(function (seat, i) {
+    Engine.MODES[mode].seats.slice(0, n).forEach(function (seat, i) {
       var s = seats[i];
-      if (s.type === 'off') return;
       // 默认名字存成中文（“你”“玩家2”“蓝方电脑”），显示时由 nameOf 按当前语言翻译
       var name = s.name.trim();
       if (s.type === 'human') {
@@ -1205,8 +1175,10 @@
   var demo = { view: null, state: null, timer: 0, anim: null, round: 0 };
 
   function demoNew() {
-    var mode = ['classic', 'trigon', 'gemblo', 'cube', 'prism'][demo.round++ % 5];
-    demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.map(function (s, i) { return { seat: i }; })));
+    // 演示局下的是开局页面选中的棋盘和人数
+    var mode = prefs.mode;
+    var n = seatCount(mode);
+    demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.slice(0, n).map(function (s, i) { return { seat: i }; })));
     demo.anim = null;
     demo.mode = mode;
     $('demo-label').textContent = t('demo.label', { mode: modeLabel(mode) });
@@ -1233,6 +1205,15 @@
       animate();
     }
     demo.timer = setTimeout(demoStep, 520);
+  }
+
+  // 换了棋盘或人数：演示局马上按新的设置重开
+  function restartDemo() {
+    clearTimeout(demo.timer);
+    demo.state = null;
+    demo.anim = null;
+    demo.resetPending = false;
+    if (!$('setup').hidden) startDemo();
   }
 
   function startDemo() {
@@ -3321,8 +3302,18 @@
         (isHost ? '' : ' disabled') + '><span>' + escapeHtml(modeLabel(m)) + '</span></label>';
     }).join('');
 
+    // 人数：没设成空位的座位数；房主改人数就把后面的座位设为空位或恢复
+    var active = room.seats.filter(function (s) { return s.kind !== 'off'; }).length;
+    var lobbyCount = $('lobby-count');
+    var counts = countOptions(room.mode);
+    lobbyCount.hidden = counts.length < 2;
+    lobbyCount.innerHTML = counts.map(function (c) {
+      return '<label><input type="radio" name="lobby-count" value="' + c + '"' + (c === active ? ' checked' : '') + (isHost ? '' : ' disabled') + '><span>' + c + '</span></label>';
+    }).join('');
+
     seatsEl.innerHTML = M.seats.map(function (seat, i) {
       var s = room.seats[i];
+      if (s.kind === 'off') return '';
       var mine = s.owner === me;
       var title, sub;
       var color = colorName(seat.color);
@@ -3339,7 +3330,6 @@
       var hostCtl = '';
       if (isHost) {
         var kinds = [['open', t('seat.human')], ['ai', t('seat.ai')]];
-        if (room.mode !== 'duo') kinds.push(['off', t('seat.off')]);
         actions += '<div class="seg small" role="radiogroup" aria-label="' + th('seat.typeAria', { color: color }) + '">' + kinds.map(function (k) {
           return '<label><input type="radio" name="lobby-kind-' + i + '" value="' + k[0] + '" data-kind="' + i + '"' + (s.kind === k[0] ? ' checked' : '') + '><span>' + escapeHtml(k[1]) + '</span></label>';
         }).join('') + '</div>';
@@ -3603,7 +3593,50 @@
         prefs.mode = r.value;
         savePrefs();
         renderSetup();
+        restartDemo();
       });
+    });
+    $('presets').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-preset]');
+      if (!b) return;
+      var mode = prefs.mode;
+      presetsFor(seatCount(mode))[+b.dataset.preset].forEach(function (type, i) { prefs.seats[mode][i].type = type; });
+      savePrefs();
+      renderSetup();
+    });
+    $('count-seg').addEventListener('change', function (e) {
+      if (e.target.name !== 'seat-count') return;
+      prefs.counts[prefs.mode] = +e.target.value;
+      savePrefs();
+      renderSetup();
+      restartDemo();
+      var again = $('seat-count-' + e.target.value);
+      if (again) again.focus();
+    });
+    $('seats').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-llm]');
+      if (b) claudeSample().then(function () { openLlmDialog(prefs.seats[prefs.mode][+b.dataset.llm].model); });
+    });
+    $('seats').addEventListener('input', function (e) {
+      if (!e.target.classList.contains('seat-name')) return;
+      prefs.seats[prefs.mode][+e.target.dataset.seat].name = e.target.value;
+      savePrefs();
+    });
+    $('seats').addEventListener('change', function (e) {
+      var el = e.target;
+      if (el.dataset.seat === undefined) return;
+      var i = +el.dataset.seat;
+      var s = prefs.seats[prefs.mode][i];
+      var focusId = el.id;
+      if (el.name === 'seat-type-' + i) s.type = el.value;
+      else if (el.classList.contains('seat-level-sel')) s.level = el.value;
+      else if (el.classList.contains('seat-model-sel')) s.model = el.value;
+      else return;
+      savePrefs();
+      renderSetup();
+      var again = $(focusId);
+      if (again) again.focus();
+      if (s.type === 'ai' && s.level === 'llm' && el.name !== 'seat-type-' + i) ensureLLMSetup(s.model);
     });
     $('opt-hints').addEventListener('change', function (e) { prefs.hints = e.target.checked; savePrefs(); });
     $('opt-sound').addEventListener('change', function (e) { prefs.sound = e.target.checked; savePrefs(); });
@@ -3681,6 +3714,18 @@
         sendOp({ type: 'seat', seat: +t.dataset.model, model: t.value }).catch(renderLobby);
         ensureLLMSetup(t.value);
       }
+    });
+    $('lobby-count').addEventListener('change', function (e) {
+      if (e.target.name !== 'lobby-count' || !online || !online.room) return;
+      var n = +e.target.value;
+      var room = online.room;
+      // 前 n 个座位参战（原来是空位的改成电脑），其余设为空位；逐个发送
+      var ops = [];
+      room.seats.forEach(function (s, i) {
+        var want = i < n ? (s.kind === 'off' ? 'ai' : s.kind) : 'off';
+        if (want !== s.kind) ops.push({ type: 'seat', seat: i, kind: want });
+      });
+      ops.reduce(function (pr, op) { return pr.then(function () { return sendOp(op); }); }, Promise.resolve()).catch(renderLobby);
     });
     $('lobby-speed').addEventListener('change', function (e) { sendOp({ type: 'speed', speed: e.target.value }).catch(renderLobby); });
     $('lobby-nick').addEventListener('change', function (e) {
