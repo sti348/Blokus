@@ -650,15 +650,56 @@
   var prefs = loadPrefs();
   function savePrefs() { save(STORE_PREFS, prefs); }
 
+  // 只有宝石阵可以选 3、4、6 方；其他棋盘人数固定（座位全用）
   function countOptions(mode) {
-    var out = [];
-    for (var n = 2; n <= Engine.MODES[mode].seats.length; n++) if (Engine.validCount(mode, n)) out.push(n);
-    return out;
+    return mode === 'gemblo' ? [3, 4, 6] : [Engine.MODES[mode].seats.length];
   }
 
   function seatCount(mode) {
-    var n = prefs.counts[mode];
-    return Engine.validCount(mode, n) ? n : countOptions(mode).slice(-1)[0];
+    var opts = countOptions(mode);
+    return opts.indexOf(prefs.counts[mode]) >= 0 ? prefs.counts[mode] : opts[opts.length - 1];
+  }
+
+  /* ---------- 棋盘选择卡片 ---------- */
+
+  var MODE_ICONS = {
+    classic: '<rect x="3" y="3" width="18" height="18" rx="2.5" class="ico-base"/><rect x="5" y="5" width="4.5" height="4.5" rx="1" fill="var(--p-blue)"/><rect x="14.5" y="5" width="4.5" height="4.5" rx="1" fill="var(--p-yellow)"/><rect x="14.5" y="14.5" width="4.5" height="4.5" rx="1" fill="var(--p-red)"/><rect x="5" y="14.5" width="4.5" height="4.5" rx="1" fill="var(--p-green)"/>',
+    duo: '<rect x="3" y="3" width="18" height="18" rx="2.5" class="ico-base"/><rect x="7" y="7" width="4.5" height="4.5" rx="1" fill="var(--p-violet)"/><rect x="12.5" y="12.5" width="4.5" height="4.5" rx="1" fill="var(--p-orange)"/>',
+    trigon: '<path d="M7.5 4.2h9L21 12l-4.5 7.8h-9L3 12z" class="ico-base"/><path d="M7.5 4.2L12 12 3 12z" fill="var(--p-blue)"/><path d="M16.5 4.2L21 12h-9z" fill="var(--p-yellow)"/><path d="M12 12h9l-4.5 7.8z" fill="var(--p-red)"/><path d="M3 12h9l-4.5 7.8z" fill="var(--p-green)"/>',
+    gemblo: '<path d="M8.5 3.5h4l2 3.4-2 3.5h-4l-2-3.5z" fill="var(--p-violet)"/><path d="M14.5 7h4l2 3.4-2 3.5h-4l-2-3.5z" fill="var(--p-yellow)"/><path d="M8.5 10.5h4l2 3.4-2 3.5h-4l-2-3.5z" class="ico-base"/><path d="M2.5 7h4l2 3.4-2 3.5h-4L.5 10.4z" fill="var(--p-orange)"/><path d="M14.5 14h4l2 3.4-2 3.5h-4l-2-3.5z" fill="var(--p-blue)"/>',
+    cube: '<path d="M12 3.5l8 4.2-8 4.3-8-4.3z" fill="var(--p-blue)"/><path d="M4 7.7l8 4.3v8.5l-8-4.3z" fill="var(--p-blue)" opacity=".72"/><path d="M20 7.7L12 12v8.5l8-4.3z" fill="var(--p-blue)" opacity=".5"/>',
+    prism: '<path d="M6 7l12-2 3 5.5-12 2z" fill="var(--p-red)"/><path d="M6 7l3 5.5v8L6 15z" fill="var(--p-red)" opacity=".72"/><path d="M9 12.5l12-2v8l-12 2z" fill="var(--p-red)" opacity=".5"/>'
+  };
+
+  function modeIcon(mode) {
+    return '<svg class="mode-ico" viewBox="0 0 24 24" aria-hidden="true">' + MODE_ICONS[mode] + '</svg>';
+  }
+
+  // 3×2 的棋盘卡片，选中的那张下面垫一块会滑动的高亮
+  function modeCards(name, checked, disabled) {
+    return '<i class="mode-thumb" aria-hidden="true"></i>' + MODE_LIST.map(function (m) {
+      return '<label class="mode-card"><input type="radio" name="' + name + '" id="' + name + '-' + m + '" value="' + m + '"' +
+        (m === checked ? ' checked' : '') + (disabled ? ' disabled' : '') + '>' +
+        '<span>' + modeIcon(m) + '<b>' + escapeHtml(modeLabel(m)) + '</b></span></label>';
+    }).join('');
+  }
+
+  function moveThumb(box, instant) {
+    var thumb = box && box.querySelector('.mode-thumb');
+    var input = box && box.querySelector('input:checked');
+    if (!thumb || !input || !box.offsetParent) return;
+    var card = input.parentNode;
+    if (instant) thumb.classList.add('no-anim');
+    thumb.style.width = card.offsetWidth + 'px';
+    thumb.style.height = card.offsetHeight + 'px';
+    thumb.style.transform = 'translate(' + card.offsetLeft + 'px,' + card.offsetTop + 'px)';
+    thumb.style.opacity = '1';
+    if (instant) { void thumb.offsetWidth; thumb.classList.remove('no-anim'); }
+  }
+
+  function buildModeSeg() {
+    $('mode-seg').innerHTML = modeCards('mode', prefs.mode, false);
+    moveThumb($('mode-seg'), true);
   }
 
   // n 个座位的快速开局：1、2、3 个人类玩家（人类尽量隔开坐）、全是人类、全是电脑
@@ -687,6 +728,7 @@
   function renderSetup() {
     var mode = prefs.mode;
     $('mode-' + mode).checked = true;
+    moveThumb($('mode-seg'));
     $('mode-note').textContent = t('modeNote.' + mode);
     $('opt-hints').checked = prefs.hints;
     $('opt-sound').checked = prefs.sound;
@@ -712,14 +754,16 @@
     }).join('');
 
     var seats = prefs.seats[mode];
-    $('presets').innerHTML = presetsFor(n).map(function (types, k) {
+    var presetList = presetsFor(n);
+    $('presets').style.setProperty('--cols', presetList.length === 4 ? 2 : Math.min(3, presetList.length));
+    $('presets').innerHTML = presetList.map(function (types, k) {
       var active = types.every(function (type, i) { return seats[i].type === type; });
       return '<button type="button" class="btn' + (active ? ' active' : '') + '" data-preset="' + k + '">' + escapeHtml(presetLabel(types)) + '</button>';
     }).join('');
 
     var list = $('seats');
     list.classList.toggle('cols2', n > 4);
-    list.style.setProperty('--rows', n > 4 ? Math.ceil(n / 2) : 4);
+    list.style.setProperty('--rows', 4);
     var humanNo = 0;
     var humans = seats.slice(0, n).filter(function (s) { return s.type === 'human'; }).length;
     list.innerHTML = Engine.MODES[mode].seats.slice(0, n).map(function (seat, i) {
@@ -1181,7 +1225,7 @@
     demo.state = Engine.createGame(Engine.buildConfig(mode, Engine.MODES[mode].seats.slice(0, n).map(function (s, i) { return { seat: i }; })));
     demo.anim = null;
     demo.mode = mode;
-    $('demo-label').textContent = t('demo.label', { mode: modeLabel(mode) });
+    $('demo-label').innerHTML = modeIcon(mode) + '<b>' + escapeHtml(modeLabel(mode)) + '</b>';
   }
 
   function demoStep() {
@@ -2790,7 +2834,8 @@
     applyI18n();
     if (!$('setup').hidden) {
       renderSetup();
-      if (demo.mode) $('demo-label').textContent = t('demo.label', { mode: modeLabel(demo.mode) });
+      buildModeSeg();
+      if (demo.mode) $('demo-label').innerHTML = modeIcon(demo.mode) + '<b>' + escapeHtml(modeLabel(demo.mode)) + '</b>';
     }
     if (!$('lobby').hidden) renderLobby();
     if (game.state && !$('game').hidden) {
@@ -3070,8 +3115,8 @@
     if (!netInfo.ready) note.textContent = t('online.checking');
     else if (net && net.kind === 'artifact') note.textContent = t(canWrite() ? 'online.noteShared' : 'online.noteReadOnly');
     else if (net) note.textContent = t('online.noteServer');
-    else if (netInfo.reason === 'file' || netInfo.reason === 'static') note.innerHTML = t('online.noteNeedServerHtml');
-    else note.textContent = t('online.noteNone');
+    else note.textContent = netInfo.reason === 'file' || netInfo.reason === 'static' ? '' : t('online.noteNone');
+    note.hidden = !note.textContent;
     var last = load(STORE_ONLINE);
     var rejoin = $('rejoin-room');
     rejoin.hidden = !(usable && last && last.code && !online);
@@ -3297,10 +3342,24 @@
     var M = Engine.MODES[room.mode];
     var known = peersKnown();
 
-    $('lobby-mode').innerHTML = MODE_LIST.map(function (m) {
-      return '<label><input type="radio" name="lobby-mode" id="lobby-mode-' + m + '" value="' + m + '"' + (room.mode === m ? ' checked' : '') +
-        (isHost ? '' : ' disabled') + '><span>' + escapeHtml(modeLabel(m)) + '</span></label>';
-    }).join('');
+    var modeBox = $('lobby-mode');
+    var modeKey = I18n.lang() + '|' + isHost;
+    if (modeBox.dataset.key !== modeKey) {
+      modeBox.dataset.key = modeKey;
+      modeBox.innerHTML = modeCards('lobby-mode', room.mode, !isHost);
+      moveThumb(modeBox, true);
+    } else {
+      $('lobby-mode-' + room.mode).checked = true;
+      moveThumb(modeBox);
+    }
+    // 人数固定的棋盘：房主把之前设成空位的座位改回电脑
+    if (isHost && countOptions(room.mode).length === 1 && online.fixedRev !== room.rev &&
+        room.seats.some(function (s) { return s.kind === 'off'; })) {
+      online.fixedRev = room.rev;
+      room.seats.reduce(function (pr, s, i) {
+        return s.kind === 'off' ? pr.then(function () { return sendOp({ type: 'seat', seat: i, kind: 'ai' }, true); }) : pr;
+      }, Promise.resolve()).catch(function () {});
+    }
 
     // 人数：没设成空位的座位数；房主改人数就把后面的座位设为空位或恢复
     var active = room.seats.filter(function (s) { return s.kind !== 'off'; }).length;
@@ -3588,13 +3647,12 @@
       });
     });
 
-    document.querySelectorAll('input[name="mode"]').forEach(function (r) {
-      r.addEventListener('change', function () {
-        prefs.mode = r.value;
-        savePrefs();
-        renderSetup();
-        restartDemo();
-      });
+    $('mode-seg').addEventListener('change', function (e) {
+      if (e.target.name !== 'mode') return;
+      prefs.mode = e.target.value;
+      savePrefs();
+      renderSetup();
+      restartDemo();
     });
     $('presets').addEventListener('click', function (e) {
       var b = e.target.closest('[data-preset]');
@@ -3887,6 +3945,8 @@
       if (game.view && game.view.resize()) game.view.draw();
       if (demo.view && demo.view.resize()) demo.view.draw();
       placeTour();
+      moveThumb($('mode-seg'), true);
+      moveThumb($('lobby-mode'), true);
     });
 
     // 语言与新手引导
@@ -3909,6 +3969,7 @@
 
   initLang();
   applyI18n();
+  buildModeSeg();
   applyTheme();
   readPalette();
   bindUI();
@@ -3924,6 +3985,9 @@
   ensureNet();
   claudeSample();
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(function () { if (demo.view && demo.view.resize()) demo.view.draw(); });
+    document.fonts.ready.then(function () {
+      if (demo.view && demo.view.resize()) demo.view.draw();
+      moveThumb($('mode-seg'), true);
+    });
   }
 })();

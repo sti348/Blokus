@@ -28,7 +28,7 @@
     'mode.prism': 'Prismas',
     'modeNote.classic': '21 peças quadradas para cada um; quatro jogadores começam pelos quatro cantos.',
     'modeNote.duo': 'Dois jogadores, começando pelos dois pontos de partida internos.',
-    'modeNote.trigon': '22 peças triangulares para cada um e 6 pontos de partida compartilhados. Quatro jogadores usam um hexágono de lado 9; o tabuleiro diminui com menos jogadores.',
+    'modeNote.trigon': '22 peças triangulares para cada um em um tabuleiro hexagonal de lado 9, com 6 pontos de partida compartilhados.',
     'modeNote.gemblo': 'O Gemblo original: um tabuleiro de hexágonos, 18 peças para cada um (1–5 casas). Suas peças nunca se tocam; cada nova fica ponta com ponta com uma das suas, separada por um lado. 3, 4 ou 6 jogadores; com menos jogadores, usa-se o meio do tabuleiro.',
     'modeNote.cube': 'Variante 3D original: as peças caem de cima e se empilham no chão ou sobre as peças de qualquer jogador, até 5 camadas. Suas peças não podem se tocar face a face — só por uma aresta ou um canto. 12 peças de cubos para cada um.',
     'modeNote.prism': '3D numa grade triangular: o chão hexagonal é feito de triângulos e cada casa é um prisma triangular; as peças caem e se empilham. Nada de contato face a face com suas próprias peças — só aresta ou canto. 19 peças de prismas para cada um (1–4 casas).',

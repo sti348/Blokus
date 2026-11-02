@@ -32,7 +32,7 @@
     'mode.prism': 'Prisms',
     'modeNote.classic': '21 square pieces each; four players start from the four corners.',
     'modeNote.duo': 'Two players, starting from the two inner start points.',
-    'modeNote.trigon': '22 triangle pieces each and 6 shared start points. Four players use a side-9 hexagon; the board shrinks with fewer players.',
+    'modeNote.trigon': '22 triangle pieces each on a side-9 hexagonal board with 6 shared start points.',
     'modeNote.gemblo': 'The original Gemblo: a board of hexagons, 18 pieces each (1–5 cells). Your own pieces never touch; each new one goes apex to apex with one of yours, one edge apart. 3, 4 or 6 players; fewer players use the middle of the board.',
     'modeNote.cube': 'Original 3D variant: pieces drop from above and stack on the floor or on anyone’s pieces, up to 5 layers. Your pieces may not touch face to face — only along an edge or at a corner. 12 cube pieces each.',
     'modeNote.prism': '3D on a triangle grid: the hexagonal floor is made of triangles and every cell is a triangular prism; pieces drop and stack. No face-to-face contact with your own pieces — edge or corner only. 19 prism pieces each (1–4 cells).',

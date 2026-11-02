@@ -28,7 +28,7 @@
     'mode.prism': 'Prismes',
     'modeNote.classic': '21 pièces carrées chacun ; quatre joueurs partent des quatre coins.',
     'modeNote.duo': 'Deux joueurs, qui partent des deux points de départ intérieurs.',
-    'modeNote.trigon': '22 pièces triangulaires chacun et 6 points de départ communs. À quatre, on joue sur un hexagone de 9 de côté ; le plateau rétrécit avec moins de joueurs.',
+    'modeNote.trigon': '22 pièces triangulaires chacun sur un plateau hexagonal de 9 de côté, avec 6 points de départ communs.',
     'modeNote.gemblo': 'Le Gemblo original : un plateau d’hexagones, 18 pièces chacun (1 à 5 cases). Tes propres pièces ne se touchent jamais ; chaque nouvelle pièce se place pointe contre pointe avec l’une des tiennes, à un côté d’écart. 3, 4 ou 6 joueurs ; à moins de joueurs, on utilise le centre du plateau.',
     'modeNote.cube': 'Variante 3D originale : les pièces tombent d’en haut et s’empilent sur le sol ou sur les pièces de n’importe qui, jusqu’à 5 niveaux. Tes pièces ne peuvent pas se toucher face contre face — seulement par une arête ou un coin. 12 pièces cubiques chacun.',
     'modeNote.prism': 'De la 3D sur une grille triangulaire : le sol hexagonal est fait de triangles et chaque case est un prisme triangulaire ; les pièces tombent et s’empilent. Pas de contact face contre face avec tes propres pièces — seulement par une arête ou un coin. 19 pièces prismatiques chacun (1 à 4 cases).',

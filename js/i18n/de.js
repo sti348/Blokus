@@ -28,7 +28,7 @@
     'mode.prism': 'Prismen',
     'modeNote.classic': 'Je 21 Quadrat-Steine; vier Spieler starten in den vier Ecken.',
     'modeNote.duo': 'Zwei Spieler, die an den beiden inneren Startpunkten beginnen.',
-    'modeNote.trigon': 'Je 22 Dreieck-Steine und 6 gemeinsame Startpunkte. Zu viert wird ein Sechseck mit Seitenlänge 9 genutzt; mit weniger Spielern wird das Brett kleiner.',
+    'modeNote.trigon': 'Je 22 Dreieck-Steine auf einem sechseckigen Brett (Seitenlänge 9) mit 6 gemeinsamen Startpunkten.',
     'modeNote.gemblo': 'Das originale Gemblo: ein Brett aus Sechsecken, je 18 Steine (1–5 Felder). Deine eigenen Steine berühren sich nie; jeder neue liegt Spitze an Spitze mit einem deiner Steine, eine Kante voneinander entfernt. 3, 4 oder 6 Spieler; mit weniger Spielern wird die Brettmitte genutzt.',
     'modeNote.cube': 'Eigene 3D-Variante: Steine fallen von oben und stapeln sich auf dem Boden oder auf beliebigen Steinen, bis zu 5 Ebenen. Deine Steine dürfen sich nicht Fläche an Fläche berühren — nur an einer Kante oder Ecke. Je 12 Würfel-Steine.',
     'modeNote.prism': '3D auf einem Dreiecksgitter: Der sechseckige Boden besteht aus Dreiecken, jedes Feld ist ein dreieckiges Prisma; Steine fallen und stapeln sich. Kein Kontakt Fläche an Fläche mit deinen eigenen Steinen — nur Kante oder Ecke. Je 19 Prismen-Steine (1–4 Felder).',

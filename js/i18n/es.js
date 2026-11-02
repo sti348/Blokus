@@ -28,7 +28,7 @@
     'mode.prism': 'Prismas',
     'modeNote.classic': '21 piezas cuadradas por jugador; cuatro jugadores empiezan desde las cuatro esquinas.',
     'modeNote.duo': 'Dos jugadores, que empiezan desde los dos puntos de salida interiores.',
-    'modeNote.trigon': '22 piezas triangulares por jugador y 6 puntos de salida compartidos. Con cuatro jugadores se usa un hexágono de lado 9; el tablero se reduce con menos jugadores.',
+    'modeNote.trigon': '22 piezas triangulares por jugador en un tablero hexagonal de lado 9, con 6 puntos de salida compartidos.',
     'modeNote.gemblo': 'El Gemblo original: un tablero de hexágonos, 18 piezas por jugador (1–5 casillas). Tus piezas nunca se tocan; cada nueva va punta con punta con una de las tuyas, separada por un lado. 3, 4 o 6 jugadores; con menos jugadores se usa el centro del tablero.',
     'modeNote.cube': 'Variante 3D original: las piezas caen desde arriba y se apilan sobre el suelo o sobre las piezas de cualquiera, hasta 5 capas. Tus piezas no pueden tocarse cara a cara, solo por una arista o una esquina. 12 piezas de cubos por jugador.',
     'modeNote.prism': '3D sobre una cuadrícula triangular: el suelo hexagonal está hecho de triángulos y cada casilla es un prisma triangular; las piezas caen y se apilan. Sin contacto cara a cara con tus propias piezas: solo por arista o esquina. 19 piezas de prismas por jugador (1–4 casillas).',

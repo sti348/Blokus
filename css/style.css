@@ -223,8 +223,8 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 
 .setup-panel {
   display: grid;
-  gap: 12px;
-  padding: 18px 20px 20px;
+  gap: 10px;
+  padding: 14px 18px 16px;
   border-radius: var(--r-lg);
   background: var(--raised);
   box-shadow: var(--shadow);
@@ -232,9 +232,13 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 }
 
 .field { display: grid; gap: 6px; min-width: 0; }
-.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; }
-.count-seg span { min-width: 2.2em; text-align: center; font-family: var(--font-num); }
-.hero-note { margin: 18px 0 0; max-width: 440px; min-height: 4.4em; color: var(--ink-soft); font-size: 13px; line-height: 1.5; text-align: center; text-wrap: pretty; }
+.field-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 30px; }
+.count-seg { padding: 2px; }
+.seg.small.count-seg span { min-width: 2.2em; padding: 2px 8px; text-align: center; font-family: var(--font-num); }
+.hero-caption { display: grid; gap: 4px; justify-items: center; margin-top: 6px; max-width: 440px; }
+.demo-name { display: inline-flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600; color: var(--ink); }
+.demo-name .mode-ico { width: 20px; height: 20px; }
+.hero-note { margin: 0; height: 5.8em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; max-width: 440px; min-height: 4.4em; color: var(--ink-soft); font-size: 13px; line-height: 1.5; text-align: center; text-wrap: pretty; }
 .seg.modes span { padding: 5px 10px; font-size: 13.5px; }
 .field-label {
   font-size: 12px;
@@ -244,9 +248,10 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 }
 .field-label small { font-weight: 400; letter-spacing: .04em; margin-left: 6px; }
 
-.presets-field { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px; }
-.presets { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
-.presets .btn { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.presets-field { grid-template-columns: minmax(0, 1fr); }
+/* 快速开局：整齐的格子（3 列，4 个时 2 列），始终预留两行高度 */
+.presets { display: grid; grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); gap: 6px; min-height: 66px; align-content: start; }
+.presets .btn { min-height: 30px; padding: 0 8px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .presets .btn.active { border-color: var(--ink); background: var(--surface); }
 
 .seats { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -295,12 +300,12 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .panel-stack > .panel-body.inactive { opacity: 0; visibility: hidden; }
 
 /* 开局页面的座位：一行一个，行高固定；人多（宝石阵 6 方）时两列 */
-#seats { min-height: calc(var(--rows, 4) * 42px + (var(--rows, 4) - 1) * 6px); align-content: start; gap: 6px; }
+#seats { min-height: calc(var(--rows, 4) * 40px + (var(--rows, 4) - 1) * 6px); align-content: start; gap: 6px; }
 #seats .seat {
   grid-template-columns: 30px minmax(0, 1fr) auto;
   grid-template-areas: "sw main type";
-  height: 42px;
-  padding: 4px 6px 4px 4px;
+  height: 40px;
+  padding: 3px 6px 3px 3px;
   column-gap: 8px;
   animation: seat-in .18s ease;
 }
@@ -311,7 +316,7 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 #seats .seat-llm { min-width: 32px; min-height: 32px; padding: 0 6px; }
 #seats .seat-llm svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 .seat-main { grid-area: main; min-width: 0; display: flex; }
-.seat-main .seat-name { width: 100%; min-height: 32px; padding: 4px 9px; }
+.seat-main .seat-name { width: 100%; min-height: 32px; height: 32px; padding: 3px 9px; }
 .seat-ai { display: flex; gap: 6px; min-width: 0; width: 100%; }
 .seat-ai select { min-width: 0; flex: 1; min-height: 32px; padding: 3px 6px; }
 @keyframes seat-in { from { opacity: 0; transform: translateY(-3px); } }
@@ -828,7 +833,7 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 }
 .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
 .tab:hover { color: var(--ink); }
-.panel-body { display: grid; gap: 20px; min-width: 0; }
+.panel-body { display: grid; gap: 12px; min-width: 0; }
 .field-note { margin: 0; color: var(--ink-soft); font-size: 12px; }
 
 .online-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -1008,6 +1013,10 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .panel-tools { flex: none; display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
 .icon-toggle {
   position: relative;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   display: inline-grid;
   place-items: center;
   width: 34px;
@@ -1137,4 +1146,70 @@ dialog.tour.dim { background: rgba(12, 14, 20, .55); }
   .panel-top .tabs { order: 2; flex-basis: 100%; }
   .presets-field { grid-template-columns: minmax(0, 1fr); }
   .presets .btn { flex: 1 1 auto; }
+}
+
+/* ---------- 棋盘选择：3×2 卡片，选中的卡片下垫一块滑动的高亮 ---------- */
+.modes {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  isolation: isolate;
+}
+.mode-thumb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: -1;
+  opacity: 0;
+  border-radius: 9px;
+  background: var(--raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 6px 16px -6px rgba(27, 32, 48, .28);
+  transition: transform .32s cubic-bezier(.2, .8, .2, 1), width .32s cubic-bezier(.2, .8, .2, 1), height .32s, opacity .2s;
+}
+.mode-thumb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(120deg, var(--p-blue), var(--p-yellow) 35%, var(--p-red) 65%, var(--p-green));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.mode-thumb.no-anim { transition: none; }
+.mode-card { position: relative; cursor: pointer; min-width: 0; }
+.mode-card input { position: absolute; opacity: 0; pointer-events: none; }
+.mode-card span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 9px;
+  border-radius: 9px;
+  color: var(--ink-soft);
+  transition: color .2s, background-color .2s;
+}
+.mode-card b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mode-card:hover span { color: var(--ink); background: color-mix(in srgb, var(--raised) 55%, transparent); }
+.mode-card input:checked + span { color: var(--ink); background: transparent; }
+.mode-card input:checked + span b { font-weight: 600; }
+.mode-card input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: -2px; }
+.mode-card input:disabled + span { cursor: default; }
+.mode-ico { flex: none; width: 22px; height: 22px; transition: transform .3s cubic-bezier(.2, .8, .2, 1), filter .2s, opacity .2s; }
+.mode-ico .ico-base { fill: var(--board-groove); }
+.mode-card input:not(:checked) + span .mode-ico { filter: saturate(.25); opacity: .7; }
+.mode-card:hover .mode-ico { filter: none; opacity: 1; }
+.mode-card input:checked + span .mode-ico { transform: scale(1.12); }
+@media (max-width: 560px) {
+  .modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .presets .btn { white-space: normal; line-height: 1.2; min-height: 40px; padding: 3px 6px; }
+  .presets { min-height: 86px; }
+  #seats, #seats.cols2 { grid-template-columns: minmax(0, 1fr); min-height: calc(6 * 40px + 5 * 6px); }
+  #seats.cols2 .seat { grid-template-columns: 30px minmax(0, 1fr) auto; column-gap: 8px; }
 }

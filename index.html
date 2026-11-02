@@ -20,9 +20,11 @@
       <p class="tagline" data-i18n="app.tagline">Squares, triangles and hexagons — claim the board corner to corner</p>
       <div class="demo-frame">
         <canvas id="demo-board" data-i18n-attr="aria-label:demo.aria" aria-label="AI self-play demo"></canvas>
-        <span class="demo-label" id="demo-label"></span>
       </div>
-      <p class="hero-note" id="mode-note"></p>
+      <div class="hero-caption">
+        <span class="demo-name" id="demo-label"></span>
+        <p class="hero-note" id="mode-note"></p>
+      </div>
     </div>
 
     <div class="setup-panel">
@@ -32,6 +34,8 @@
           <button type="button" role="tab" class="tab" id="tab-online" aria-controls="online-panel" aria-selected="false" data-i18n="setup.tab.online">Online</button>
         </div>
         <div class="panel-tools">
+          <button type="button" class="icon-toggle" id="records-open" data-i18n-attr="title:setup.records;aria-label:setup.records" title="Game records" aria-label="Game records"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4.5V9h4.5"/><path d="M12 8v4.5l3 2"/></svg></button>
+          <button type="button" class="icon-toggle rules-open" data-i18n-attr="title:setup.rules;aria-label:setup.rules" title="How to play" aria-label="How to play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 5.5A2.5 2.5 0 0 1 7 3h12.5v15H7a2.5 2.5 0 0 0-2.5 2.5z"/><path d="M4.5 20.5A2.5 2.5 0 0 1 7 18h12.5v3H7"/></svg></button>
           <label class="icon-toggle" data-i18n-attr="title:opt.sound" title="Sound"><input type="checkbox" id="opt-sound" checked data-i18n-attr="aria-label:opt.sound" aria-label="Sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6"/><path class="wave" d="M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></label>
           <label class="icon-toggle" data-i18n-attr="title:opt.dark" title="Dark theme"><input type="checkbox" id="opt-dark" data-i18n-attr="aria-label:opt.dark" aria-label="Dark theme"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></svg></label>
           <label class="lang-pick" data-i18n-attr="title:lang.label" title="Language">
@@ -43,14 +47,7 @@
 
       <div class="field">
         <span class="field-label" data-i18n="setup.board">Board</span>
-        <div class="seg modes" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board">
-          <label><input type="radio" name="mode" id="mode-classic" value="classic" checked><span data-i18n="mode.classic">Classic 20×20</span></label>
-          <label><input type="radio" name="mode" id="mode-duo" value="duo"><span data-i18n="mode.duo">Duo 14×14</span></label>
-          <label><input type="radio" name="mode" id="mode-trigon" value="trigon"><span data-i18n="mode.trigon">Triangles</span></label>
-          <label><input type="radio" name="mode" id="mode-gemblo" value="gemblo"><span data-i18n="mode.gemblo">Gemblo</span></label>
-          <label><input type="radio" name="mode" id="mode-cube" value="cube"><span data-i18n="mode.cube">3D Cubes</span></label>
-          <label><input type="radio" name="mode" id="mode-prism" value="prism"><span data-i18n="mode.prism">Prisms</span></label>
-        </div>
+        <div class="modes" id="mode-seg" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board"></div>
       </div>
 
       <div class="panel-stack">
@@ -84,8 +81,6 @@
         <div class="setup-actions">
           <button type="submit" class="btn primary big" id="start-btn" data-i18n="setup.start">Start game</button>
           <button type="button" class="btn" id="resume-btn" hidden data-i18n="setup.resume">Resume last game</button>
-          <button type="button" class="btn ghost" id="records-open" data-i18n="setup.records">Game records</button>
-          <button type="button" class="btn ghost rules-open" data-i18n="setup.rules">How to play</button>
         </div>
       </form>
 
@@ -111,9 +106,6 @@
         <button type="button" class="btn" id="rejoin-room" hidden></button>
         <p class="online-note" id="online-note" role="status" data-i18n="online.checking">Checking online play…</p>
         <p class="form-error" id="online-error" role="alert" hidden></p>
-        <div class="setup-actions">
-          <button type="button" class="btn ghost rules-open" data-i18n="setup.rules">How to play</button>
-        </div>
       </div>
       </div>
     </div>
@@ -135,7 +127,7 @@
         <p class="lobby-hint" data-i18n="lobby.hint">Send the room code to friends — they join under “Online”. The host starts the game when everyone is seated.</p>
         <div class="field">
           <span class="field-label" data-i18n="setup.board">Board</span>
-          <div class="seg" id="lobby-mode" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board"></div>
+          <div class="modes" id="lobby-mode" role="radiogroup" data-i18n-attr="aria-label:setup.board" aria-label="Board"></div>
         </div>
         <div class="field">
           <div class="field-head">
