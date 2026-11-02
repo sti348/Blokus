@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: sti348-blockturf-online
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/info
+    envVars:
+      - key: NODE_ENV
+        value: production
