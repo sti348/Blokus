@@ -29,9 +29,8 @@
   var RECORD_LIMIT = 60;
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
-  // 平面棋盘的落子动画：逐格弹出
-  var PLACE_MS = REDUCED_MOTION ? 0 : 560;
-  var POP_MS = 300;
+  // 平面棋盘的落子动画：整块棋子放下去
+  var PLACE_MS = REDUCED_MOTION ? 0 : 380;
   var ANCHOR_MS = REDUCED_MOTION ? 0 : 360;
 
   // 重新触发一次性的 CSS 动画
@@ -499,20 +498,33 @@
       self.drawCell(L, i, colorOf(v));
     });
     if (anim && animT < 1) {
-      // 从棋子中心往外逐格弹出（带一点回弹）
+      // 整块棋子“放下去”：先略微抬起（稍大、带投影），再整体落到棋盘上，轻轻一压，落定时亮一下
       var acol = colorOf(anim.player);
-      var cs = anim.cells.map(function (i) { return cellCenterPx(L, i); });
       var mx = 0, my = 0;
-      cs.forEach(function (c) { mx += c[0] / cs.length; my += c[1] / cs.length; });
-      var order = anim.cells.map(function (i, k) { return { i: i, d: Math.hypot(cs[k][0] - mx, cs[k][1] - my) }; })
-        .sort(function (a, b) { return a.d - b.d; });
-      var elapsed = now - anim.t0;
-      var stagger = Math.min(45, (PLACE_MS - POP_MS) / Math.max(1, order.length));
-      order.forEach(function (o, k) {
-        var x = clamp((elapsed - k * stagger) / POP_MS, 0, 1);
-        if (x <= 0) return;
-        self.drawCell(L, o.i, acol, Math.min(1, x * 2.2), 0.5 + 0.5 * easeOutBack(x));
-      });
+      anim.cells.forEach(function (i) { var c = cellCenterPx(L, i); mx += c[0] / anim.cells.length; my += c[1] / anim.cells.length; });
+      var land = Math.min(1, animT / 0.72);
+      var settle = 1 + 2.2 * Math.pow(land - 1, 3) + 1.2 * Math.pow(land - 1, 2);
+      var lift = 1 - land;
+      var sc = 1 + 0.12 * (1 - settle);
+      var dy = -L.inr * 0.9 * lift * lift;
+      g.save();
+      g.translate(mx, my + dy);
+      g.scale(sc, sc);
+      g.translate(-mx, -my);
+      if (lift > 0) {
+        g.save();
+        g.shadowColor = 'rgba(10, 14, 24, ' + (0.38 * lift).toFixed(3) + ')';
+        g.shadowBlur = L.inr * 2.4 * lift;
+        g.shadowOffsetY = L.inr * 1.6 * lift;
+        anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
+        g.restore();
+      }
+      anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
+      g.restore();
+      if (animT > 0.68) {
+        var flash = 1 - (animT - 0.68) / 0.32;
+        anim.cells.forEach(function (i) { self.drawCell(L, i, '#ffffff', 0.32 * flash); });
+      }
     } else if (anim) {
       anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player)); });
     }
