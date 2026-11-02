@@ -29,6 +29,22 @@
   var RECORD_LIMIT = 60;
   var REDUCED_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DROP_MS = REDUCED_MOTION ? 0 : 240;
+  // 平面棋盘的落子动画：逐格弹出 + 一圈波纹
+  var PLACE_MS = REDUCED_MOTION ? 0 : 640;
+  var POP_MS = 300;
+  var ANCHOR_MS = REDUCED_MOTION ? 0 : 360;
+
+  // 重新触发一次性的 CSS 动画
+  function replayClass(el, cls) {
+    if (!el || REDUCED_MOTION) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+  }
+
+  function animMs(state) { return state && state.topo.dims === 3 ? DROP_MS : PLACE_MS; }
+  function easeOutCubic(x) { return 1 - Math.pow(1 - x, 3); }
+  function easeOutBack(x) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); }
 
   function $(id) { return document.getElementById(id); }
 
@@ -473,7 +489,7 @@
     // 已落棋子
     var anim = ov.anim, animSet = null, animT = 1;
     if (anim) {
-      animT = DROP_MS ? clamp((now - anim.t0) / DROP_MS, 0, 1) : 1;
+      animT = PLACE_MS ? clamp((now - anim.t0) / PLACE_MS, 0, 1) : 1;
       animSet = {};
       anim.cells.forEach(function (i) { animSet[i] = 1; });
     }
@@ -483,9 +499,32 @@
       if (v < 0 || (animSet && animSet[i])) return;
       self.drawCell(L, i, colorOf(v));
     });
-    if (anim) {
-      var ease = 1 - Math.pow(1 - animT, 3);
-      anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player), 0.35 + 0.65 * ease, 1.28 - 0.28 * ease); });
+    if (anim && animT < 1) {
+      // 从棋子中心往外逐格弹出（带一点回弹），同时一圈波纹扩散开
+      var acol = colorOf(anim.player);
+      var cs = anim.cells.map(function (i) { return cellCenterPx(L, i); });
+      var mx = 0, my = 0;
+      cs.forEach(function (c) { mx += c[0] / cs.length; my += c[1] / cs.length; });
+      var order = anim.cells.map(function (i, k) { return { i: i, d: Math.hypot(cs[k][0] - mx, cs[k][1] - my) }; })
+        .sort(function (a, b) { return a.d - b.d; });
+      var elapsed = now - anim.t0;
+      var stagger = Math.min(45, (PLACE_MS - POP_MS) / Math.max(1, order.length));
+      order.forEach(function (o, k) {
+        var x = clamp((elapsed - k * stagger) / POP_MS, 0, 1);
+        if (x <= 0) return;
+        self.drawCell(L, o.i, acol, Math.min(1, x * 2.2), 0.5 + 0.5 * easeOutBack(x));
+      });
+      var reach = Math.max.apply(null, order.map(function (o) { return o.d; })) + L.inr * 2.2;
+      var rt = easeOutCubic(animT);
+      g.beginPath();
+      g.arc(mx, my, L.inr + reach * rt, 0, Math.PI * 2);
+      g.globalAlpha = 0.55 * (1 - animT);
+      g.lineWidth = Math.max(1.5, L.inr * 0.5 * (1 - animT));
+      g.strokeStyle = acol;
+      g.stroke();
+      g.globalAlpha = 1;
+    } else if (anim) {
+      anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player)); });
     }
 
     // 上一步高亮
@@ -493,14 +532,16 @@
       this.outline(L, ov.lastMove, palette.ink, Math.max(1.5, L.inr * 0.18));
     }
 
-    // 角点提示
+    // 角点提示：轮到自己时淡入并弹一下
     if (ov.anchors && ov.anchors.list.length) {
+      var af = ANCHOR_MS && ov.anchors.t0 ? clamp((now - ov.anchors.t0) / ANCHOR_MS, 0, 1) : 1;
       g.fillStyle = ov.anchors.color;
-      g.globalAlpha = 0.55;
+      g.globalAlpha = 0.55 * af;
+      var ar = L.inr * 0.28 * (0.3 + 0.7 * easeOutBack(af));
       ov.anchors.list.forEach(function (i) {
         var c = cellCenterPx(L, i);
         g.beginPath();
-        g.arc(c[0], c[1], L.inr * 0.28, 0, Math.PI * 2);
+        g.arc(c[0], c[1], ar, 0, Math.PI * 2);
         g.fill();
       });
       g.globalAlpha = 1;
@@ -1257,7 +1298,11 @@
     demo.state = null;
     demo.anim = null;
     demo.resetPending = false;
-    if (!$('setup').hidden) startDemo();
+    if (!$('setup').hidden) {
+      replayClass(document.querySelector('.demo-frame'), 'swap');
+      replayClass(document.querySelector('.hero-caption'), 'swap');
+      startDemo();
+    }
   }
 
   function startDemo() {
@@ -1396,11 +1441,20 @@
       game.recordSaved = false;
     }
     prepareView(!sameGame);
+    if (!sameGame) playEntrance();
     game.seenGameId = gameId || null;
     saveGame();
     onTurnStart(true);
     renderGame();
     maybeStartTour();
+  }
+
+  function playEntrance() {
+    game.leftShown = [];
+    var el = $('game');
+    replayClass(el, 'entering');
+    clearTimeout(game.enterTimer);
+    game.enterTimer = setTimeout(function () { el.classList.remove('entering'); }, 900);
   }
 
   function prepareView(resetXray) {
@@ -1469,6 +1523,7 @@
   }
 
   function onTurnStart(first) {
+    if (!first) replayClass($('turn'), 'flash');
     game.turnKey = turnKeyOf();
     game.turnStart = Date.now();
     resetSelection();
@@ -1488,6 +1543,8 @@
       var forb = Engine.forbiddenMask(st.board, st.topo, st.current);
       game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb);
       game.anchorDots = game.anchors.list;
+      game.anchorsT0 = performance.now();
+      if (ANCHOR_MS) animate();
       if (st.topo.dims === 3) {
         // 立体：只标出棋子落下后能停住的角点
         var hm = Engine.heightMap(st.board, st.topo);
@@ -1872,7 +1929,7 @@
     if (!canAct()) return ov;
     var pl = cur();
     var color = palette.colors[pl.color];
-    if (prefs.hints && game.anchors) ov.anchors = { list: game.anchorDots || game.anchors.list, color: color };
+    if (prefs.hints && game.anchors) ov.anchors = { list: game.anchorDots || game.anchors.list, color: color, t0: game.anchorsT0 };
     if (game.hint) {
       var h = game.hint;
       ov.hint = {
@@ -2094,7 +2151,7 @@
       rafId = 0;
       var more = false;
       if (game.view && !$('game').hidden && game.state) {
-        if (game.anim && now - game.anim.t0 >= DROP_MS) game.anim = null;
+        if (game.anim && now - game.anim.t0 >= animMs(game.state)) game.anim = null;
         var ct = game.view.camTarget;
         if (ct) {
           var cam = game.view.cam;
@@ -2110,9 +2167,10 @@
         game.view.draw(now);
         syncPreview();
         if (game.anim || (game.hint && !REDUCED_MOTION && canAct())) more = true;
+        if (game.anchorsT0 && now - game.anchorsT0 < ANCHOR_MS) more = true;
       }
       if (demo.view && !$('setup').hidden) {
-        if (demo.anim && now - demo.anim.t0 >= DROP_MS) demo.anim = null;
+        if (demo.anim && now - demo.anim.t0 >= animMs(demo.state)) demo.anim = null;
         // 立体演示局缓慢环绕
         if (demo.state && demo.state.topo.dims === 3 && !REDUCED_MOTION && !document.hidden) {
           demo.view.cam = demo.view.cam || { yaw: View3D.DEFAULT_CAM.yaw, pitch: View3D.DEFAULT_CAM.pitch };
@@ -2259,6 +2317,8 @@
     var order = trayOrder(st.set);
     var viewing = dockOwner() !== trayOwner() ? dockOwner() : null;
     var replaying = isReplay();
+    var prevLeft = game.leftShown || [];
+    game.leftShown = [];
     var lastMover = replaying && replay.rec && replay.step ? replay.rec.actions[replay.step - 1].player : -1;
     $('players').innerHTML = st.players.map(function (pl, p) {
       var current = replaying ? p === lastMover : !st.over && p === st.current;
@@ -2280,13 +2340,15 @@
         return '<i' + (pl.remaining[pi] ? '' : ' class="used"') + '>' + pieceIcon(st.set, pi) + '</i>';
       }).join('');
       var left = pl.remaining.filter(Boolean).length;
+      var bump = prevLeft[p] !== undefined && left < prevLeft[p] && !REDUCED_MOTION;
+      game.leftShown[p] = left;
       var note = lastNote(st, p);
       return '<div class="pcard' + (current ? ' current' : '') + (pl.done ? ' done' : '') + (viewing === pl ? ' viewing' : '') +
         '" style="--c:' + colorVar(pl) + '" data-player="' + p + '" role="button" tabindex="0"' +
         ' title="' + th('card.title') + '" aria-label="' + th('card.aria', { name: nameOf(pl), n: left }) + '">' +
         '<span class="pcard-swatch" aria-hidden="true"></span>' +
         '<div class="pcard-name">' + dot + escapeHtml(nameOf(pl)) + '<small>' + th('card.sub', { color: colorName(pl.color), kind: kind }) + '</small></div>' +
-        '<div class="pcard-left" title="' + th('card.leftTitle', { n: left }) + '">' + th('card.leftHtml', { n: left }) + '</div>' +
+        '<div class="pcard-left' + (bump ? ' bump' : '') + '" title="' + th('card.leftTitle', { n: left }) + '">' + th('card.leftHtml', { n: left }) + '</div>' +
         '<div class="pcard-bar" aria-hidden="true"><i style="--w:' + (placed / total * 100).toFixed(1) + '%"></i></div>' +
         '<div class="pcard-pieces" aria-hidden="true">' + pieces + '</div>' +
         '<div class="pcard-state">' + stateText + '</div>' +
@@ -2451,9 +2513,9 @@
     }
     $('end-title').textContent = title;
     $('end-note').textContent = t(st.players[0].noBonus ? 'end.noteNoBonus' : 'end.noteBonus');
-    $('end-rows').innerHTML = rows.map(function (r) {
+    $('end-rows').innerHTML = rows.map(function (r, k) {
       var tag = r.monoLast ? 'end.tagMono' : r.allPlaced ? 'end.tagAll' : r.player.resigned ? 'end.tagStopped' : '';
-      return '<tr>' +
+      return '<tr style="--i:' + k + '">' +
         '<td><span class="rank' + (r.rank === 1 ? ' first' : '') + '">' + r.rank + '</span></td>' +
         '<td><span class="who" style="--c:' + colorVar(r.player) + '"><i></i><span>' + escapeHtml(nameOf(r.player)) +
         (tag ? '<span class="bonus">' + th(tag) + '</span>' : '') + '</span></span></td>' +
@@ -2469,7 +2531,60 @@
     renderRecordButtons();
     renderGame();
     openDialog('end-dialog');
-    if (!reopen) sound('win');
+    if (!reopen) {
+      sound('win');
+      var myWin = mine.length === 1 && mine[0].rank === 1 && (isOnlineGame() || humanCount() === 1);
+      if (myWin) setTimeout(function () { confetti(colorVar(mine[0].player)); }, 280);
+    }
+  }
+
+  // 彩纸：从结算框上方撒下，主色是赢家的颜色，约 2.5 秒后自动收掉
+  function confetti(mainColor) {
+    if (REDUCED_MOTION) return;
+    var host = $('end-dialog');
+    var cv = document.createElement('canvas');
+    cv.className = 'confetti';
+    host.appendChild(cv);
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    var W = window.innerWidth, H = window.innerHeight;
+    cv.width = W * dpr;
+    cv.height = H * dpr;
+    var g = cv.getContext('2d');
+    g.scale(dpr, dpr);
+    var cs = getComputedStyle(document.documentElement);
+    var main = mainColor.replace(/^var\((--[\w-]+)\)$/, function (m, v) { return cs.getPropertyValue(v).trim(); });
+    var colors = [main, main, main].concat(['--p-blue', '--p-yellow', '--p-red', '--p-green'].map(function (v) { return cs.getPropertyValue(v).trim(); }));
+    var parts = [];
+    for (var i = 0; i < 140; i++) {
+      parts.push({
+        x: W / 2 + (Math.random() - 0.5) * W * 0.5, y: H * 0.18 + (Math.random() - 0.5) * 60,
+        vx: (Math.random() - 0.5) * 11, vy: -Math.random() * 9 - 3,
+        r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.35,
+        w: 5 + Math.random() * 6, h: 8 + Math.random() * 8, c: colors[i % colors.length]
+      });
+    }
+    var t0 = performance.now();
+    (function frame(now) {
+      var t = (now - t0) / 2600;
+      g.clearRect(0, 0, W, H);
+      parts.forEach(function (q) {
+        q.vy += 0.28;
+        q.vx *= 0.985;
+        q.x += q.vx;
+        q.y += q.vy;
+        q.r += q.vr;
+        g.save();
+        g.globalAlpha = Math.max(0, 1 - Math.max(0, t - 0.6) / 0.4);
+        g.translate(q.x, q.y);
+        g.rotate(q.r);
+        g.scale(1, Math.abs(Math.cos(q.r * 1.7)) * 0.8 + 0.2);
+        g.fillStyle = q.c;
+        g.fillRect(-q.w / 2, -q.h / 2, q.w, q.h);
+        g.restore();
+      });
+      if (t < 1 && host.open) requestAnimationFrame(frame);
+      else cv.remove();
+    })(t0);
   }
 
   /* ================= 对局记录与回放 ================= */
@@ -2824,7 +2939,7 @@
     el.setAttribute('aria-label', title);
     el.classList.toggle('words', !cjk);
     el.innerHTML = parts.map(function (part, i) {
-      return '<span class="logo-ch" style="--c: var(--p-' + colors[i % colors.length] + ')">' + escapeHtml(part) + '</span>';
+      return '<span class="logo-ch" style="--c: var(--p-' + colors[i % colors.length] + '); --i: ' + i + '">' + escapeHtml(part) + '</span>';
     }).join('');
   }
 
@@ -2921,6 +3036,7 @@
     $('tour-back').disabled = tour.i === 0;
     $('tour-next').textContent = t(tour.i === n - 1 ? 'tour.done' : 'tour.next');
     placeTour();
+    replayClass($('tour-card'), 'step-in');
     try { $('tour-next').focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
   }
 

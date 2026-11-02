@@ -307,7 +307,6 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
   height: 40px;
   padding: 3px 6px 3px 3px;
   column-gap: 8px;
-  animation: seat-in .18s ease;
 }
 #seats .seat-swatch { min-height: 0; font-size: 15px; }
 #seats.cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -319,7 +318,7 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
 .seat-main .seat-name { width: 100%; min-height: 32px; height: 32px; padding: 3px 9px; }
 .seat-ai { display: flex; gap: 6px; min-width: 0; width: 100%; }
 .seat-ai select { min-width: 0; flex: 1; min-height: 32px; padding: 3px 6px; }
-@keyframes seat-in { from { opacity: 0; transform: translateY(-3px); } }
+
 
 .setup-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
@@ -621,11 +620,14 @@ input[type="text"]:disabled { color: var(--ink-soft); background: var(--surface)
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: background-color .12s, border-color .12s, transform .12s;
+  transition: background-color .15s, border-color .15s, transform .18s cubic-bezier(.2, .8, .2, 1), box-shadow .18s;
 }
 .piece-btn svg { width: 100%; height: 100%; display: block; }
-.piece-btn:hover:not(:disabled) { border-color: var(--line); transform: translateY(-1px); }
+.piece-btn:hover:not(:disabled) { border-color: var(--line); transform: translateY(-2px); box-shadow: 0 6px 12px -8px rgba(27, 32, 48, .45); }
+.piece-btn svg { transition: opacity .35s, transform .3s cubic-bezier(.2, .8, .2, 1); }
+.piece-btn:hover:not(:disabled) svg { transform: scale(1.06); }
 .piece-btn[aria-selected="true"] {
+  animation: pick .32s cubic-bezier(.2, 1.4, .4, 1);
   border-color: var(--turn);
   background: color-mix(in srgb, var(--turn) 14%, var(--surface));
   box-shadow: 0 0 0 1px var(--turn);
@@ -1213,3 +1215,92 @@ dialog.tour.dim { background: rgba(12, 14, 20, .55); }
   #seats, #seats.cols2 { grid-template-columns: minmax(0, 1fr); min-height: calc(6 * 40px + 5 * 6px); }
   #seats.cols2 .seat { grid-template-columns: 30px minmax(0, 1fr) auto; column-gap: 8px; }
 }
+
+/* ---------- 动画 ---------- */
+@keyframes fade-up { from { opacity: 0; transform: translateY(10px); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(.94); } }
+@keyframes pick { 0% { transform: scale(.9); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+/* 切换页面 */
+.screen:not([hidden]) { animation: fade-in .28s ease-out; }
+
+/* 标题字依次落下 */
+.logo-ch { animation: logo-in .7s cubic-bezier(.2, 1.35, .4, 1) both; animation-delay: calc(var(--i, 0) * 90ms + 80ms); }
+@keyframes logo-in { from { opacity: 0; transform: translateY(-.35em) scale(.9); } }
+.logo-ch:nth-child(2n) { animation-name: logo-in-2; }
+@keyframes logo-in-2 { from { opacity: 0; transform: translateY(-.29em) scale(.9); } to { transform: translateY(.06em); } }
+
+/* 演示局换棋盘：淡入 */
+.demo-frame.swap { animation: pop-in .4s cubic-bezier(.2, .8, .2, 1); }
+.hero-caption.swap { animation: fade-up .35s ease-out; }
+
+/* 进入对局：棋盘、玩家卡片、托盘依次出现 */
+#game.entering .topbar { animation: fade-up .35s ease-out both; }
+#game.entering .board-wrap { animation: pop-in .45s cubic-bezier(.2, .8, .2, 1) both .05s; }
+#game.entering .pcard { animation: fade-up .4s ease-out both; }
+#game.entering .pcard:nth-child(2) { animation-delay: .06s; }
+#game.entering .pcard:nth-child(3) { animation-delay: .12s; }
+#game.entering .pcard:nth-child(4) { animation-delay: .18s; }
+#game.entering .pcard:nth-child(5) { animation-delay: .24s; }
+#game.entering .pcard:nth-child(6) { animation-delay: .3s; }
+#game.entering .dock { animation: fade-up .45s ease-out both .12s; }
+
+/* 换人：回合栏闪一下 */
+.turn.flash { animation: turn-flash .7s ease-out; }
+.turn.flash .turn-dot { animation: dot-pop .5s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes turn-flash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--turn) 45%, transparent); }
+  100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--turn) 0%, transparent); }
+}
+@keyframes dot-pop { 0% { transform: scale(.5) rotate(-45deg); } 100% { transform: none; } }
+
+/* 当前玩家卡片：左侧色条 + 淡淡的底色 */
+.pcard { overflow: hidden; }
+.pcard::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--c);
+  transform: scaleY(0);
+  transition: transform .3s cubic-bezier(.2, .8, .2, 1);
+}
+.pcard.current::before { transform: none; }
+.pcard.current { background: color-mix(in srgb, var(--c) 7%, var(--raised)); }
+.pcard-left.bump b { display: inline-block; animation: bump .5s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes bump { 0% { transform: scale(1.5); color: var(--c); } 100% { transform: none; } }
+
+/* 棋盘：柔和的投影 */
+.board-wrap canvas { box-shadow: 0 1px 2px rgba(27, 32, 48, .06), 0 18px 40px -24px rgba(27, 32, 48, .45); }
+.board-wrap.cube canvas { box-shadow: none; }
+
+/* 弹窗：缩放淡入 */
+.dialog[open] { animation: dialog-in .26s cubic-bezier(.2, .9, .3, 1.15); }
+.dialog[open]::backdrop { animation: fade-in .22s ease-out; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(.96); } }
+#end-rows tr { animation: fade-up .38s ease-out both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); }
+.rank.first { animation: medal .7s cubic-bezier(.2, 1.4, .4, 1) .3s both; }
+@keyframes medal { from { transform: scale(0) rotate(-120deg); } }
+.confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 2; }
+
+/* 新手引导：每一步卡片轻轻滑入 */
+.tour-card.step-in { animation: fade-up .3s ease-out; }
+dialog.tour[open] { animation: fade-in .25s ease-out; }
+
+/* 按钮：主按钮悬停时一道高光扫过，按下时略缩 */
+.btn.primary { position: relative; overflow: hidden; }
+.btn.primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .22) 50%, transparent 65%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+.btn.primary:hover:not(:disabled)::after { transform: translateX(120%); transition: transform .6s ease; }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.98); }
+.mode-card:active span { transform: scale(.97); }
+.mode-card span { transition: color .2s, background-color .2s, transform .15s; }
