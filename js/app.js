@@ -518,8 +518,20 @@
     }
 
     // 上一步高亮
-    if (ov.lastMove && (!anim || animT >= 1)) {
-      this.outline(L, ov.lastMove, palette.ink, Math.max(1.5, L.inr * 0.18));
+    // 上一步：用落子方自己的颜色发一圈柔光，再描一道细亮边（不再用黑框）
+    if (ov.lastMove && ov.lastMove.length && (!anim || animT >= 1)) {
+      var owner = state.board[ov.lastMove[0]];
+      var lc = owner >= 0 ? colorOf(owner) : palette.ink;
+      g.save();
+      g.shadowColor = lc;
+      g.shadowBlur = Math.max(6, L.inr * 1.1);
+      g.globalAlpha = 0.9;
+      this.outline(L, ov.lastMove, lc, Math.max(2, L.inr * 0.2));
+      g.restore();
+      g.save();
+      g.globalAlpha = 0.75;
+      this.outline(L, ov.lastMove, 'rgba(255, 255, 255, 0.9)', Math.max(1, L.inr * 0.07));
+      g.restore();
     }
 
     // 角点提示：轮到自己时淡入并弹一下

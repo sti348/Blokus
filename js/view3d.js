@@ -413,8 +413,9 @@
         opts.strokeWidth = Math.max(1, L.k * 0.045);
       }
       if (lastSet[it.i]) {
-        opts.stroke = palette.ink;
-        opts.strokeWidth = Math.max(1.4, L.k * 0.06);
+        // 上一步：亮边代替黑边
+        opts.stroke = 'rgba(255, 255, 255, 0.92)';
+        opts.strokeWidth = Math.max(1.4, L.k * 0.05);
       }
       drawCell(g, L, it.c, color, opts);
     });
