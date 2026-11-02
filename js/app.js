@@ -498,7 +498,7 @@
       self.drawCell(L, i, colorOf(v));
     });
     if (anim && animT < 1) {
-      // 整块棋子“放下去”：先略微抬起（稍大、带投影），再整体落到棋盘上，轻轻一压，落定时亮一下
+      // 整块棋子“放下去”：先略微抬起（稍大、带投影），再整体落到棋盘上，轻轻一压
       var acol = colorOf(anim.player);
       var mx = 0, my = 0;
       anim.cells.forEach(function (i) { var c = cellCenterPx(L, i); mx += c[0] / anim.cells.length; my += c[1] / anim.cells.length; });
@@ -521,10 +521,6 @@
       }
       anim.cells.forEach(function (i) { self.drawCell(L, i, acol); });
       g.restore();
-      if (animT > 0.68) {
-        var flash = 1 - (animT - 0.68) / 0.32;
-        anim.cells.forEach(function (i) { self.drawCell(L, i, '#ffffff', 0.32 * flash); });
-      }
     } else if (anim) {
       anim.cells.forEach(function (i) { self.drawCell(L, i, colorOf(anim.player)); });
     }
@@ -1323,8 +1319,10 @@
 
   function startDemo() {
     if (!demo.view) {
+      // 演示局和真实对局画法一样：落子动画 + 上一步的同色柔光
       demo.view = new BoardView($('demo-board'), function () { return demo.state; }, function () {
-        return { anim: demo.anim };
+        var st = demo.state;
+        return { anim: demo.anim, lastMove: st && st.lastMove ? cellsToIdx(st, st.lastMove.cells) : null };
       });
     }
     demo.view.resize();
