@@ -530,18 +530,20 @@
     }
 
     // 上一步高亮
-    // 上一步：用落子方自己的颜色发一圈柔光，再描一道细亮边（不再用黑框）
-    if (ov.lastMove && ov.lastMove.length && (!anim || animT >= 1)) {
+    // 上一步：用落子方自己的颜色发一圈柔光，再描一道细亮边（不再用黑框）。
+    // 落子动画一开始就在落点淡入，电脑连续快速落子时也看得见
+    if (ov.lastMove && ov.lastMove.length) {
       var owner = state.board[ov.lastMove[0]];
       var lc = owner >= 0 ? colorOf(owner) : palette.ink;
+      var gf = anim && animT < 1 ? Math.min(1, animT / 0.45) : 1;
       g.save();
       g.shadowColor = lc;
       g.shadowBlur = Math.max(6, L.inr * 1.1);
-      g.globalAlpha = 0.9;
+      g.globalAlpha = 0.9 * gf;
       this.outline(L, ov.lastMove, lc, Math.max(2, L.inr * 0.2));
       g.restore();
       g.save();
-      g.globalAlpha = 0.75;
+      g.globalAlpha = 0.75 * gf;
       this.outline(L, ov.lastMove, 'rgba(255, 255, 255, 0.9)', Math.max(1, L.inr * 0.07));
       g.restore();
     }

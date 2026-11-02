@@ -389,7 +389,8 @@
         return;
       }
       if (it.kind === 'anim') {
-        drawCell(g, L, it.c, colorOf(it.player), { alpha: it.alpha });
+        // 正在落下的那块也带上一步的亮边，电脑连续落子时也看得见
+        drawCell(g, L, it.c, colorOf(it.player), { alpha: it.alpha, stroke: 'rgba(255, 255, 255, 0.92)', strokeWidth: Math.max(1.4, L.k * 0.05) });
         return;
       }
       var x = it.c[0], y = it.c[1], z = it.c[2];
