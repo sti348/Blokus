@@ -8,6 +8,7 @@
  *   - 每局结束时请求一次插页广告（midgame），广告期间静音并挡住界面
  *   - 遵守平台的静音设置；界面语言优先用平台给的 locale
  *   - 偏好、对局记录等存进平台的 data 模块（登录用户跨设备同步，未登录时平台自己存在本机）
+ *   - 和朋友一起玩：上报所在房间（平台的「邀请朋友」按钮）、从邀请进来时直接进房间、平台账号的用户名
  * 没有 SDK（直接打开网站、Claude 发布的页面、本地文件）时，所有方法都是空操作，行为和以前完全一样。
  * 在任意网址加 ?useLocalSdk=true 可以用 SDK 的本地测试模式（模拟广告）。
  */
@@ -217,6 +218,55 @@
     return safe(function () { return root.localStorage; }) || null;
   }
 
+  /* ---------- 和朋友一起玩（平台的邀请 / 加入） ---------- */
+
+  // 从邀请链接或好友加入进来时要进的房间号；没有时返回 null
+  function inviteRoom() {
+    if (!sdk) return null;
+    var p = safe(function () { return sdk.game.inviteParams; });
+    var code = p && typeof p.room === 'string' ? p.room : null;
+    if (!code) code = safe(function () { return sdk.game.getInviteParam('room'); });
+    return typeof code === 'string' && code ? code : null;
+  }
+
+  // 从平台的「多人游戏」入口进来：应直接建一个房间等朋友加入
+  function instantMultiplayer() {
+    return !!(sdk && safe(function () { return sdk.game.isInstantMultiplayer; }));
+  }
+
+  // 玩家已经在游戏里时接受了邀请：fn(房间号)
+  function onJoinRoom(fn) {
+    if (!sdk) return;
+    safe(function () {
+      sdk.game.addJoinRoomListener(function (params) {
+        var code = params && typeof params.room === 'string' ? params.room : null;
+        if (code) fn(code);
+      });
+    });
+  }
+
+  // 告诉平台玩家在哪个房间、能否被朋友加入（只在变化时上报）
+  var roomKey = '';
+  function updateRoom(code, joinable) {
+    if (!sdk) return;
+    var key = code ? code + ':' + !!joinable : '';
+    if (key === roomKey) return;
+    var had = roomKey;
+    roomKey = key;
+    safe(function () {
+      if (!code) { if (had) sdk.game.leftRoom(); return; }
+      sdk.game.updateRoom({ roomId: code, isJoinable: !!joinable, inviteParams: { room: code } });
+    });
+  }
+
+  // 平台账号的用户名；没登录、不在平台上时返回 null
+  function username() {
+    if (!sdk) return Promise.resolve(null);
+    return Promise.resolve().then(function () { return sdk.user.getUser(); }).then(function (u) {
+      return u && typeof u.username === 'string' && u.username ? u.username : null;
+    }, function () { return null; });
+  }
+
   root.BlokusPlatform = {
     init: init,
     loaded: loaded,
@@ -228,6 +278,11 @@
     happytime: happytime,
     store: store,
     wantsSdk: wantsSdk,
+    inviteRoom: inviteRoom,
+    instantMultiplayer: instantMultiplayer,
+    onJoinRoom: onJoinRoom,
+    updateRoom: updateRoom,
+    username: username,
     // 在 CrazyGames 上（加载了 SDK）
     get crazyGames() { return present; },
     get active() { return !!sdk; },

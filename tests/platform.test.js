@@ -38,9 +38,17 @@ function fakeSdk(opts = {}) {
         gameplayStart: () => calls.push('gameplayStart'),
         gameplayStop: () => calls.push('gameplayStop'),
         happytime: () => calls.push('happytime'),
-        addSettingsChangeListener: (fn) => listeners.push(fn)
+        addSettingsChangeListener: (fn) => listeners.push(fn),
+        inviteParams: opts.inviteParams || null,
+        isInstantMultiplayer: !!opts.instant,
+        updateRoom: (r) => calls.push('updateRoom:' + JSON.stringify(r)),
+        leftRoom: () => calls.push('leftRoom'),
+        addJoinRoomListener: (fn) => { calls.join = fn; }
       },
-      user: { systemInfo: { locale: opts.locale || 'pt-BR' } },
+      user: {
+        systemInfo: { locale: opts.locale || 'pt-BR' },
+        getUser: async () => { if (opts.userError) throw { code: 'other' }; return opts.user === undefined ? null : opts.user; }
+      },
       ad: {
         requestAd: (type, cb) => {
           calls.push('requestAd:' + type);
@@ -178,4 +186,43 @@ test('平台：只在被 CrazyGames 嵌入时加载 SDK', () => {
   assert.equal(want({ framed: true, referrer: 'https://notcrazygames.com/' }), false);
   assert.equal(want({ framed: true, referrer: 'https://crazygames.com.evil.example/' }), false);
   assert.equal(want({ framed: true, ancestors: ['https://example.com'] }), false);
+});
+
+test('平台：和朋友一起玩——邀请进入、多人入口、上报房间、用户名', async () => {
+  let r = loadPlatform(null);
+  assert.equal(r.P.inviteRoom(), null);
+  assert.equal(r.P.instantMultiplayer(), false);
+  assert.equal(await r.P.username(), null);
+  r.P.updateRoom('ABCDE', true);
+
+  r = loadPlatform(fakeSdk({ inviteParams: { room: 'K7Q2M' }, instant: true, user: { username: 'Crazy_Fox' } }));
+  const { P, calls } = r;
+  await P.init();
+  calls.length = 0;
+  assert.equal(P.inviteRoom(), 'K7Q2M');
+  assert.equal(P.instantMultiplayer(), true);
+  assert.equal(await P.username(), 'Crazy_Fox');
+  // 只在变化时上报；离开房间时 leftRoom
+  P.updateRoom('ABCDE', true);
+  P.updateRoom('ABCDE', true);
+  P.updateRoom('ABCDE', false);
+  P.updateRoom(null);
+  P.updateRoom(null);
+  assert.deepEqual(calls.slice(), [
+    'updateRoom:{"roomId":"ABCDE","isJoinable":true,"inviteParams":{"room":"ABCDE"}}',
+    'updateRoom:{"roomId":"ABCDE","isJoinable":false,"inviteParams":{"room":"ABCDE"}}',
+    'leftRoom'
+  ]);
+  // 已经在玩时接受邀请
+  const joined = [];
+  P.onJoinRoom((code) => joined.push(code));
+  calls.join({ room: 'ZZZZZ' });
+  calls.join({});
+  assert.deepEqual(joined, ['ZZZZZ']);
+
+  // 没登录 / 出错时没有用户名
+  r = loadPlatform(fakeSdk({ userError: true }));
+  await r.P.init();
+  assert.equal(await r.P.username(), null);
+  assert.equal(r.P.inviteRoom(), null);
 });

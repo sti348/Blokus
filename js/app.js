@@ -34,10 +34,15 @@
   var Platform = window.BlokusPlatform || {
     gameplay: function () {}, muted: function () { return false; }, locale: function () { return null; },
     endOfGameAd: function () { return Promise.resolve('none'); }, happytime: function () {}, loaded: function () {},
+    inviteRoom: function () { return null; }, instantMultiplayer: function () { return false; }, onJoinRoom: function () {},
+    updateRoom: function () {}, username: function () { return Promise.resolve(null); },
     store: function () { try { return window.localStorage; } catch (e) { return null; } },
     crazyGames: false, active: false
   };
   // 只存在这台设备上的键：大模型密钥、联机身份和房间；其余（偏好、引导、记录、未下完的局）在游戏平台上随账号同步
+  // 大模型电脑（需要填自己的接口和密钥）在 CrazyGames 上不提供
+  var LLM_ON = !Platform.crazyGames;
+  var LEVEL_CHOICES = LLM_ON ? LEVELS : LEVELS.filter(function (lv) { return lv !== 'llm'; });
   var DEVICE_ONLY = {};
   DEVICE_ONLY[STORE_LLM] = DEVICE_ONLY[STORE_TOKENS] = DEVICE_ONLY[STORE_ONLINE] = true;
   function storeFor(key) {
@@ -716,7 +721,8 @@
         var seat = p.seats[m][i];
         if (!seat) return;
         if (s.type === 'human' || s.type === 'ai') seat.type = s.type;
-        if (LEVELS.indexOf(s.level) >= 0) seat.level = s.level;
+        if (LEVEL_CHOICES.indexOf(s.level) >= 0) seat.level = s.level;
+        else if (s.level === 'llm') seat.level = 'expert';
         if (typeof s.name === 'string') seat.name = s.name.slice(0, 12);
         if (typeof s.model === 'string') seat.model = LLM.profileName(s.model);
       });
@@ -865,7 +871,7 @@
         ? '<input type="text" class="seat-name" id="seat-name-' + i + '" data-seat="' + i + '" maxlength="12" aria-label="' + th('seat.nameAria', { color: color }) + '"' +
           ' placeholder="' + escapeHtml(humans === 1 ? t('seat.you') : t('seat.player', { n: humanNo })) + '" value="' + escapeHtml(s.name) + '">'
         : '<span class="seat-ai"><select class="seat-level-sel" id="seat-level-' + i + '" data-seat="' + i + '" aria-label="' + th('seat.levelAria') + ' · ' + escapeHtml(t('seat.aiName', { color: color })) + '">' +
-          LEVELS.map(function (lv) { return '<option value="' + lv + '"' + (s.level === lv ? ' selected' : '') + '>' + escapeHtml(levelLabel(lv)) + '</option>'; }).join('') +
+          LEVEL_CHOICES.map(function (lv) { return '<option value="' + lv + '"' + (s.level === lv ? ' selected' : '') + '>' + escapeHtml(levelLabel(lv)) + '</option>'; }).join('') +
           '</select>' +
           (s.level === 'llm' ? '<select class="seat-model-sel" id="seat-model-' + i + '" data-seat="' + i + '" aria-label="' + th('seat.modelAria', { color: color }) + '">' + profileOptions(s.model) + '</select>' +
             '<button type="button" class="btn icon seat-llm" data-llm="' + i + '" title="' + th('llm.open') + '" aria-label="' + th('llm.open') + '"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>' : '') +
@@ -2270,9 +2276,9 @@
     online.net.preview(online.pvWant);
   }
 
-  // 告诉游戏平台对局是否正在进行（开局、继续时开始；结束、回到菜单、暂停、看引导、回放时停止）
+  // 告诉游戏平台对局是否正在进行（开局、继续时开始；结束、回到菜单、暂停、回放时停止；新手引导算在对局里）
   function syncGameplay() {
-    Platform.gameplay(!$('game').hidden && game.mode !== 'replay' && !!game.state && !game.state.over && !game.paused && !game.touring);
+    Platform.gameplay(!$('game').hidden && game.mode !== 'replay' && !!game.state && !game.state.over && !game.paused);
   }
 
   function renderGame() {
@@ -3024,7 +3030,8 @@
 
   function renderPlays() {
     var el = $('play-count');
-    if (plays.total === null) { el.hidden = true; return; }
+    // CrazyGames 里不显示（这是整个网站的次数，不是这个平台上的）
+    if (plays.total === null || Platform.crazyGames) { el.hidden = true; return; }
     var num = plays.total.toLocaleString(I18n.lang());
     el.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2" opacity=".45"/></svg>' +
       th('stats.plays', { n: plays.total, count: num });
@@ -3395,7 +3402,9 @@
     save(STORE_TOKENS, map);
   }
 
-  function nickName() { return Online.cleanName(prefs.nick) || '玩家'; }
+  // 联机昵称：自己填的优先，其次是平台账号的用户名
+  var platformNick = '';
+  function nickName() { return Online.cleanName(prefs.nick) || platformNick || '玩家'; }
 
   function setOnlineBusy(busy) {
     ['create-room', 'join-room', 'rejoin-room'].forEach(function (id) { $(id).disabled = busy || !netInfo.net; });
@@ -3499,6 +3508,58 @@
     } else {
       syncOnlineGame(room);
     }
+    reportRoom();
+  }
+
+  // 告诉平台玩家所在的房间：在房间里等人、还有空座位时朋友可以通过平台的「邀请朋友」加入
+  function reportRoom() {
+    if (!online || !online.room) return;
+    var r = online.room;
+    var open = r.seats.some(function (st) { return st.kind === 'open' && !st.owner; });
+    Platform.updateRoom(online.code, r.status === 'lobby' && open);
+  }
+
+  // 从平台的邀请进入房间（打开游戏时，或者已经在玩时接受了邀请）
+  function joinFromPlatform(code) {
+    code = Online.normalizeCode(code);
+    if (!code) return Promise.resolve();
+    return ensureNet().then(function () {
+      if (!netInfo.net || (online && online.code === code)) return;
+      prefs.tab = 'online';
+      if ($('setup').hidden) showScreen('setup');
+      else renderSetup();
+      setOnlineBusy(true);
+      return joinRoom(code).then(function () { setOnlineBusy(false); });
+    });
+  }
+
+  // CrazyGames：打开就直接进入对局（平台要求新玩家不经过菜单直接开玩，加载时间也算到对局开始为止）。
+  // 从邀请进来时进朋友的房间；从平台的多人入口进来时直接建房间；否则继续没下完的局，或者按上次的设置开一局
+  function landOnPlatform() {
+    Platform.onJoinRoom(function (code) { joinFromPlatform(code); });
+    Platform.username().then(function (name) {
+      platformNick = Online.cleanName(name || '');
+      if (platformNick) $('nick').placeholder = platformNick;
+    });
+    var invite = Platform.inviteRoom();
+    if (invite) { joinFromPlatform(invite); return; }
+    if (Platform.instantMultiplayer()) {
+      ensureNet().then(function () {
+        if (!netInfo.net) { startLocalNow(); return; }
+        prefs.tab = 'online';
+        renderSetup();
+        createOnlineRoom();
+      });
+      return;
+    }
+    startLocalNow();
+  }
+
+  function startLocalNow() {
+    var s = loadSaved();
+    if (s) { enterGame('local', s.config, s.actions); return; }
+    var cfg = buildLocalConfig();
+    if (cfg) enterGame('local', cfg);
   }
 
   function renderOnlineViews() {
@@ -3552,6 +3613,7 @@
     if (o.aiAbort) o.aiAbort.abort();
     clearTimeout(o.pvTimer);
     o.net.disconnect();
+    Platform.updateRoom(null);
     if (!notify) o.net.opAt(o.code, o.token, { type: 'leave' }).catch(function () {});
     game.mode = 'local';
     game.state = null;
@@ -3642,7 +3704,7 @@
           return '<label><input type="radio" name="lobby-kind-' + i + '" value="' + k[0] + '" data-kind="' + i + '"' + (s.kind === k[0] ? ' checked' : '') + '><span>' + escapeHtml(k[1]) + '</span></label>';
         }).join('') + '</div>';
         if (s.kind === 'ai') {
-          hostCtl = '<div class="seat-level">' + th('seat.level') + ' <div class="seg small" role="radiogroup" aria-label="' + th('seat.levelAria') + '">' + LEVELS.map(function (lv) {
+          hostCtl = '<div class="seat-level">' + th('seat.level') + ' <div class="seg small" role="radiogroup" aria-label="' + th('seat.levelAria') + '">' + LEVEL_CHOICES.map(function (lv) {
             return '<label><input type="radio" name="lobby-level-' + i + '" value="' + lv + '" data-level="' + i + '"' + (s.level === lv ? ' checked' : '') + '><span>' + escapeHtml(levelLabel(lv)) + '</span></label>';
           }).join('') + '</div>' +
             (s.level === 'llm' ? '<label class="seat-model">' + th('seat.model') + ' <select data-model="' + i + '" aria-label="' + th('seat.modelAria', { color: color }) + '">' + profileOptions(s.model) + '</select></label>' : '') +
@@ -4216,6 +4278,12 @@
 
   /* ================= 启动 ================= */
 
+  if (!LLM_ON) {
+    // CrazyGames 上不提供大模型电脑：去掉它的入口和规则说明
+    $('lobby-llm-open').hidden = true;
+    document.querySelector('[data-i18n-html="rules.llmHtml"]').hidden = true;
+    document.querySelector('[data-i18n-html="rules.levelsHtml"]').setAttribute('data-i18n-html', 'rules.levelsNoLlmHtml');
+  }
   initLang();
   applyI18n();
   buildModeSeg();
@@ -4241,4 +4309,5 @@
     });
   }
   Platform.loaded();
+  if (Platform.crazyGames) landOnPlatform();
 });
