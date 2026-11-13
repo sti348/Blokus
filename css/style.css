@@ -1344,3 +1344,24 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
 }
 .ad-shield[hidden] { display: none; }
 .ad-shield.playing { background: rgba(8, 12, 20, 0.55); }
+
+/* 首页左下角：进入三维牌桌 */
+.table-link {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px 7px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--raised) 88%, transparent);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 13px; font-weight: 500; text-decoration: none;
+  box-shadow: 0 6px 18px -10px rgba(20, 30, 60, .45);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  z-index: 2;
+}
+.table-link:hover { transform: translateY(-2px); border-color: var(--p-blue); box-shadow: 0 10px 22px -10px rgba(20, 30, 60, .55); }
+.table-link svg { width: 16px; height: 16px; fill: none; stroke: var(--p-blue); stroke-width: 1.8; stroke-linejoin: round; }
+#setup[hidden] .table-link { display: none; }
+@media (max-width: 960px) { .table-link { position: static; justify-self: start; margin-top: 4px; } }

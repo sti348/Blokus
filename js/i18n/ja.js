@@ -51,6 +51,7 @@
     'setup.start': 'ゲーム開始',
     'setup.resume': '前回の続きから',
     'setup.records': '棋譜',
+    'setup.table3d': '3Dテーブル',
     'setup.rules': '遊び方',
     'setup.errGemblo': 'ジェムブロは3人、4人または6人で遊びます（2人で遊ぶときは1人2色を担当します）。',
     'setup.errFew': 'プレイヤーが2人以上必要です。空席をプレイヤーかAIに変えてください。',

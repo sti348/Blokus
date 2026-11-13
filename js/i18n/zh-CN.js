@@ -51,6 +51,7 @@
     'setup.start': '开始对局',
     'setup.resume': '继续上局',
     'setup.records': '对局记录',
+    'setup.table3d': '三维牌桌',
     'setup.rules': '玩法规则',
     'setup.errGemblo': '宝石阵需要 3、4 或 6 方参战（两人对战时每人各执两色）。',
     'setup.errFew': '至少需要两方参战，请把一个空位改成玩家或电脑。',

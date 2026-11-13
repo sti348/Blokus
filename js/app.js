@@ -4278,6 +4278,8 @@
 
   /* ================= 启动 ================= */
 
+  // 三维牌桌是网站上单独的一页；嵌在游戏平台里或没有这一页的环境（Claude 页面、本地文件）不显示入口
+  if (Platform.crazyGames || !/^https?:$/.test(location.protocol) || (window.claude && window.claude.use)) $('table-link').hidden = true;
   if (!LLM_ON) {
     // CrazyGames 上不提供大模型电脑：去掉它的入口和规则说明
     $('lobby-llm-open').hidden = true;

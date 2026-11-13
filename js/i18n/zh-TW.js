@@ -51,6 +51,7 @@
     'setup.start': '開始對局',
     'setup.resume': '繼續上一局',
     'setup.records': '對局紀錄',
+    'setup.table3d': '3D 牌桌',
     'setup.rules': '玩法規則',
     'setup.errGemblo': '寶石陣需要 3、4 或 6 方參戰（兩人對戰時每人各執兩色）。',
     'setup.errFew': '至少需要兩方參戰，請把一個空位改成玩家或電腦。',

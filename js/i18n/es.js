@@ -52,6 +52,7 @@
     'setup.start': 'Empezar partida',
     'setup.resume': 'Continuar la última partida',
     'setup.records': 'Partidas guardadas',
+    'setup.table3d': 'Mesa 3D',
     'setup.rules': 'Cómo jugar',
     'setup.errGemblo': 'Gemblo necesita 3, 4 o 6 jugadores (con dos jugadores, cada uno lleva dos colores).',
     'setup.errFew': 'Se necesitan al menos dos jugadores: convierte un puesto vacío en jugador o IA.',

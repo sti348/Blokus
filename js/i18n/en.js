@@ -56,6 +56,7 @@
     'setup.start': 'Start game',
     'setup.resume': 'Resume last game',
     'setup.records': 'Game records',
+    'setup.table3d': '3D Table',
     'setup.rules': 'How to play',
     'setup.errGemblo': 'Gemblo needs 3, 4 or 6 players (for two players, each takes two colors).',
     'setup.errFew': 'At least two players are needed — turn an empty seat into a player or AI.',

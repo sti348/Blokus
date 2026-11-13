@@ -52,6 +52,7 @@
     'setup.start': 'Lancer la partie',
     'setup.resume': 'Reprendre la dernière partie',
     'setup.records': 'Parties enregistrées',
+    'setup.table3d': 'Table 3D',
     'setup.rules': 'Règles du jeu',
     'setup.errGemblo': 'Le Gemblo se joue à 3, 4 ou 6 joueurs (à deux, chacun prend deux couleurs).',
     'setup.errFew': 'Il faut au moins deux joueurs — transforme une place vide en joueur ou en IA.',

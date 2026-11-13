@@ -6,7 +6,7 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0
 
 WORKDIR /app
-COPY --chown=node:node package.json server.js index.html ./
+COPY --chown=node:node package.json server.js index.html table.html ./
 COPY --chown=node:node js/ ./js/
 COPY --chown=node:node css/ ./css/
 

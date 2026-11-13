@@ -51,6 +51,7 @@
     'setup.start': '게임 시작',
     'setup.resume': '지난 게임 이어 하기',
     'setup.records': '기보',
+    'setup.table3d': '3D 테이블',
     'setup.rules': '게임 방법',
     'setup.errGemblo': 'Gemblo는 3, 4, 6명이 필요해요(2명이면 각자 두 색을 맡아요).',
     'setup.errFew': '최소 두 명이 필요해요. 빈자리 하나를 플레이어나 AI로 바꿔 주세요.',

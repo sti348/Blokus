@@ -323,7 +323,7 @@ function serveStatic(req, res, pathname) {
   }
   const file = path.resolve(ROOT, rel);
   const parts = path.relative(ROOT, file).split(path.sep);
-  const allowed = (parts.length === 1 && parts[0] === 'index.html') ||
+  const allowed = (parts.length === 1 && (parts[0] === 'index.html' || parts[0] === 'table.html')) ||
     (parts.length > 1 && (parts[0] === 'css' || parts[0] === 'js'));
   if (!allowed || rel.indexOf('\0') >= 0) return sendJson(res, 404, { error: 'not found' });
   const type = MIME[path.extname(file)];
