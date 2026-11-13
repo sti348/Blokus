@@ -294,6 +294,7 @@
     'table.arMove': 'Move board',
     'table.arFind': 'Move your phone slowly and point it at a table or the floor…',
     'table.arPlace': 'Surface found · tap the screen to put the board here',
+    'table.arGuess': 'No surface found yet, so the board floats in front of you · tap to put it down, or keep aiming at a table (shiny, reflective or dark surfaces are hard to detect)',
     'table.arTip': 'Tap or drag one of your pieces · drag empty space to turn the board · pinch to resize · or walk around it',
     'table.arFail': "AR isn't available on this device (it needs Chrome on Android and Google Play Services for AR)",
     'keys.flat': 'Pick a piece, move over the board and click to place · R rotate · F flip · arrow keys move · Enter place · Esc cancel',

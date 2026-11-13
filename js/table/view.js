@@ -982,8 +982,10 @@ export function createTableView(host, api) {
   // 把棋盘和棋子放到摄像头画面里的真实桌面上：虚拟房间和桌子都不画，只画对局空间。
   // ?arsim=1：没有 AR 设备时用普通画面模拟（灰色背景、一块"桌面"，屏幕中心对准的点当作检测到的平面），便于调试。
   const arSim = new URLSearchParams(location.search).has('arsim');
+  const arSimNoPlane = new URLSearchParams(location.search).get('arsim') === 'noplane';   // 模拟一直找不到平面
   const AR = {
-    on: false, session: null, hitSource: null, placed: false, found: false, size: 1, yaw: 0, saved: null,
+    on: false, session: null, hitSource: null, pointSource: null, placed: false, found: false, guess: false, size: 1, yaw: 0, saved: null,
+    searchT: 0, shownSec: -1, err: '', frames: 0,
     root: new THREE.Group(), pivot: new THREE.Group(), extra: new THREE.Group(), simFloor: null
   };
   AR.root.add(AR.pivot);
@@ -1043,6 +1045,7 @@ export function createTableView(host, api) {
   async function enterAR(overlay) {
     if (AR.on || !V.board) return false;
     if (arSim) { beginAR(null); return true; }
+    AR.fail = '';
     if (!navigator.xr) return false;
     let session;
     try {
@@ -1051,14 +1054,18 @@ export function createTableView(host, api) {
         optionalFeatures: ['dom-overlay'],
         domOverlay: overlay ? { root: overlay } : undefined
       });
-    } catch (e) { return false; }
+    } catch (e) { AR.fail = String((e && e.message) || e).slice(0, 140); console.error(e); return false; }
     try {
       renderer.xr.enabled = true;
       renderer.xr.setReferenceSpaceType('local');
       await renderer.xr.setSession(session);
       const viewer = await session.requestReferenceSpace('viewer');
       AR.hitSource = await session.requestHitTestSource({ space: viewer });
+      // 再要一路「特征点」：光滑、纹理少的表面上平面很难识别，特征点通常更快（浏览器不支持就算了）
+      try { AR.pointSource = await session.requestHitTestSource({ space: viewer, entityTypes: ['point'] }); } catch (e) { AR.pointSource = null; }
     } catch (e) {
+      AR.fail = String((e && e.message) || e).slice(0, 140);
+      console.error(e);
       try { await session.end(); } catch (err) { /* 已经结束 */ }
       renderer.xr.enabled = false;
       return false;
@@ -1069,7 +1076,8 @@ export function createTableView(host, api) {
   }
 
   function beginAR(session) {
-    AR.on = true; AR.session = session; AR.placed = false; AR.found = false; AR.size = 1; AR.yaw = 0;
+    AR.on = true; AR.session = session; AR.placed = false; AR.found = false; AR.guess = false; AR.size = 1; AR.yaw = 0;
+    AR.searchT = 0; AR.shownSec = -1; AR.err = ''; AR.frames = 0;
     AR.saved = {
       bg: scene.background, fog: scene.fog, near: camera.near, far: camera.far, exposure: renderer.toneMappingExposure,
       envI: scene.environmentIntensity, clearAlpha: renderer.getClearAlpha(), shadows: renderer.shadowMap.enabled
@@ -1109,7 +1117,8 @@ export function createTableView(host, api) {
     if (!AR.on) return;
     const s = AR.saved;
     AR.on = false;
-    if (AR.hitSource) { try { AR.hitSource.cancel(); } catch (e) { /* 忽略 */ } AR.hitSource = null; }
+    [AR.hitSource, AR.pointSource].forEach((src) => { if (src) { try { src.cancel(); } catch (e) { /* 忽略 */ } } });
+    AR.hitSource = AR.pointSource = null;
     if (AR.session) { renderer.setAnimationLoop(null); renderer.xr.enabled = false; }
     AR.session = null;
     scene.remove(AR.root, AR.extra);
@@ -1135,21 +1144,46 @@ export function createTableView(host, api) {
   }
 
   // 每帧：找桌面、让棋盘跟着准星（还没放下时）、灯光和影子跟着棋盘
+  function hitFrom(xrFrame, src, flatOnly) {
+    if (!src) return false;
+    const res = xrFrame.getHitTestResults(src);
+    const space = renderer.xr.getReferenceSpace();
+    for (let i = 0; i < res.length; i++) {
+      const pose = res[i].getPose(space);
+      if (!pose) continue;
+      arM.fromArray(pose.transform.matrix);
+      if (flatOnly && arM.elements[5] < 0.7) continue;   // 平面只要水平的（法线朝上）；特征点没有可靠的朝向，只用位置
+      arV.setFromMatrixPosition(arM);
+      return true;
+    }
+    return false;
+  }
+
+  // 找不到平面时：棋盘先浮在面前（手机前方约半米、低一些），照样可以点屏幕放下
+  function guessSpot() {
+    const m = arCam().matrixWorld.elements;
+    const f = arC.set(-m[8], 0, -m[10]);
+    if (f.lengthSq() < 0.04) f.set(m[4], 0, m[6]);     // 几乎垂直朝下看：用手机的「上」方向当前方
+    f.normalize();
+    arV.set(m[12] + f.x * 0.5, m[13] - 0.35, m[14] + f.z * 0.5);
+  }
+
   function updateAR(xrFrame, dt) {
     let hit = false;
+    AR.frames++;
     if (AR.session) {
-      if (xrFrame && AR.hitSource) {
-        const res = xrFrame.getHitTestResults(AR.hitSource);
-        const pose = res.length ? res[0].getPose(renderer.xr.getReferenceSpace()) : null;
-        if (pose) {
-          arM.fromArray(pose.transform.matrix);
-          hit = arM.elements[5] > 0.8;           // 只要水平的面（法线朝上）
-          if (hit) arV.setFromMatrixPosition(arM);
-        }
-      }
+      if (xrFrame) hit = hitFrom(xrFrame, AR.hitSource, true) || hitFrom(xrFrame, AR.pointSource, false);
     } else {
       arRay.setFromCamera(new THREE.Vector2(0, 0), camera);
-      hit = !!arRay.ray.intersectPlane(arPlane, arV) && Math.hypot(arV.x, arV.z) < 1.3;
+      hit = !!arRay.ray.intersectPlane(arPlane, arV) && Math.hypot(arV.x, arV.z) < 1.3 && !arSimNoPlane;
+    }
+    let guess = false;
+    if (!AR.placed) {
+      AR.searchT += dt;
+      if (!hit && AR.searchT > 5) { guessSpot(); hit = true; guess = true; }
+      // 还在找的时候每秒刷新一次提示（显示找了几秒，也说明画面没卡住）
+      const sec = Math.floor(AR.searchT);
+      if (!AR.found && sec !== AR.shownSec) { AR.shownSec = sec; arNotify(); }
     }
     if (!AR.placed) {
       reticle.visible = hit;
@@ -1165,7 +1199,7 @@ export function createTableView(host, api) {
         AR.yaw = first ? w : AR.yaw + (w - AR.yaw) * (1 - Math.exp(-dt * 6));
         AR.root.visible = true;
       }
-      if (hit !== AR.found) { AR.found = hit; arNotify(); }
+      if (hit !== AR.found || guess !== AR.guess) { AR.found = hit; AR.guess = guess; arNotify(); }
     }
     AR.root.rotation.y = AR.yaw;
     const u = arUnit();
@@ -1204,8 +1238,22 @@ export function createTableView(host, api) {
   let lastT = performance.now(), clock = 0, raf = 0;
 
   function frameLoop(now, xrFrame) {
+    // AR 时 three.js 除了 XR 的帧循环，还会跑一个普通的 requestAnimationFrame 循环来调用这里（不带 XR 帧）：
+    // 那些调用一律跳过，否则会在 XR 帧以外渲染、把「找到平面」的状态冲掉
+    if (AR.session && !xrFrame) return;
     raf = 0;
     if (!V.visible && !AR.session) return;
+    try {
+      frameStep(now, xrFrame);
+    } catch (e) {
+      console.error(e);
+      const msg = String((e && e.message) || e).slice(0, 140);
+      if (AR.on && msg !== AR.err) { AR.err = msg; arNotify(); }
+    }
+    if (!AR.session) raf = requestAnimationFrame(frameLoop);
+  }
+
+  function frameStep(now, xrFrame) {
     const raw = (now - lastT) / 1000;
     const dt = Math.min(0.25, raw);
     lastT = now; clock += dt;
@@ -1251,7 +1299,6 @@ export function createTableView(host, api) {
     }
     if (env && !AR.on) env.update(dt, clock, camera);
     renderer.render(scene, camera);
-    if (!AR.session) raf = requestAnimationFrame(frameLoop);
   }
 
   function start() {
@@ -1349,10 +1396,11 @@ export function createTableView(host, api) {
       if (AR.session) AR.session.end().catch(() => endAR());
       else endAR();
     },
-    replaceAR() { if (AR.on) { AR.placed = false; AR.found = false; arNotify(); } },
-    arState() { return { on: AR.on, live: !!AR.session, placed: AR.placed, found: AR.found }; },
+    replaceAR() { if (AR.on) { AR.placed = false; AR.found = false; AR.guess = false; AR.searchT = 0; AR.shownSec = -1; arNotify(); } },
+    arFail() { return AR.fail || ''; },
+    arState() { return { on: AR.on, live: !!AR.session, placed: AR.placed, found: AR.found, guess: AR.guess, sec: Math.floor(AR.searchT), err: AR.err }; },
     // 调试和自动测试用
-    _debug: { V: V, rig: rig, camera: camera, play: play, api: api, AR: AR }
+    _debug: { V: V, rig: rig, camera: camera, play: play, api: api, AR: AR, renderer: renderer, xrCam: () => arCam() }
   };
   const fade = document.createElement('div');
   fade.className = 'table-fade';

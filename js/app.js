@@ -3182,8 +3182,11 @@
     $('th-place').disabled = !(act && ghostMove());
     $('th-stop').hidden = !act || arWait;
     var touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    $('th-tip').textContent = arWait ? t(ar.found ? 'table.arPlace' : 'table.arFind') :
+    var tip = arWait ? (ar.found ? t(ar.guess ? 'table.arGuess' : 'table.arPlace') : t('table.arFind') + (ar.sec >= 2 ? ' ' + ar.sec + 's' : '')) :
       !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : ar.on ? 'table.arTip' : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
+    // AR 画面里出错时直接显示出来（方便截图反馈）
+    if (ar.on && ar.err) tip += ' ⚠ ' + ar.err;
+    $('th-tip').textContent = tip;
   }
 
   window.addEventListener('blockturf-table-ready', function () {
@@ -4398,7 +4401,7 @@
     $('tu-ar').addEventListener('click', function () {
       if (!tableActive()) return;
       if (table.arState().on) { table.exitAR(); return; }
-      table.enterAR($('game')).then(function (ok) { if (!ok) toast(t('table.arFail'), 'warn'); });
+      table.enterAR($('game')).then(function (ok) { if (!ok) toast(t('table.arFail') + (table.arFail() ? ' — ' + table.arFail() : ''), 'warn'); });
     });
     $('tu-ar-move').addEventListener('click', function () { if (table) table.replaceAR(); });
     $('tu-hints').addEventListener('click', function () { $('opt-hints').checked = prefs.hints = !prefs.hints; savePrefs(); renderTableTools(); drawBoard(); });
