@@ -167,6 +167,38 @@
   <section id="game" class="screen game" hidden>
     <!-- 三维牌桌（默认）：画布铺满整个画面，界面浮在上面 -->
     <div class="table-root" id="table-root" hidden></div>
+    <!-- 三维牌桌的界面：浮在场景上的半透明面板 -->
+    <div class="table-ui" id="table-ui" hidden>
+      <header class="tu-top">
+        <button type="button" class="tu-chip tu-back" id="tu-back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6l-6 6 6 6"/></svg><b id="tu-back-label"></b></button>
+        <div class="tu-turn" id="tu-turn"><i></i><span id="tu-turn-text"></span></div>
+        <div class="tu-tools">
+          <span class="tu-chip tu-room" id="tu-room" hidden></span>
+          <button type="button" class="tu-chip tu-env" id="tu-env" data-i18n-attr="title:table.env" title="Room"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg><span id="tu-env-name"></span></button>
+          <button type="button" class="tu-chip icon" id="tu-top" aria-pressed="false" data-i18n-attr="title:table.top;aria-label:table.top" title="Top view (V)" aria-label="Top view"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M5 12h14M12 5v14"/></svg></button>
+          <button type="button" class="tu-chip icon" id="tu-view" data-i18n-attr="title:table.to2d;aria-label:table.to2d" title="Flat board" aria-label="Flat board"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg></button>
+          <button type="button" class="tu-chip icon" id="tu-hints" aria-pressed="true" data-i18n-attr="title:opt.hints;aria-label:opt.hints" title="Corner hints" aria-label="Corner hints"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2.2"/><circle cx="17" cy="17" r="2.2"/><path d="M9 9l6 6"/></svg></button>
+          <button type="button" class="tu-chip icon" id="tu-sound" aria-pressed="true" data-i18n-attr="title:game.sound;aria-label:game.sound" title="Sound" aria-label="Sound"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></button>
+          <button type="button" class="tu-chip icon" id="tu-help" data-i18n-attr="title:game.help;aria-label:game.help" title="Guide" aria-label="Guide"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"/><path d="M12 17.2v.1"/></svg></button>
+          <button type="button" class="tu-chip icon" id="tu-hint" data-i18n-attr="title:game.hintTitle;aria-label:game.hint" title="Hint (H)" aria-label="Hint"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg></button>
+          <button type="button" class="tu-chip icon" id="tu-undo" data-i18n-attr="title:game.undoTitle;aria-label:game.undo" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4.5V9h4.5"/></svg></button>
+          <button type="button" class="tu-chip" id="tu-pause" hidden></button>
+          <button type="button" class="tu-chip" id="tu-result" hidden data-i18n="game.result">Results</button>
+        </div>
+      </header>
+      <ul class="tu-players" id="tu-players"></ul>
+      <div class="tu-bottom">
+        <div class="tu-hold" id="th-hold" hidden>
+          <button type="button" id="th-rot-cw" data-i18n-attr="title:ctl.rotRight" title="Rotate right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><span data-i18n="table.rotate">Rotate</span></button>
+          <button type="button" id="th-flip" title="Mirror"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18"/><path d="M8 7 3 12l5 5z"/><path d="m16 7 5 5-5 5z" fill="currentColor"/></svg><span id="th-flip-label"></span></button>
+          <button type="button" id="th-roll" hidden data-i18n-attr="title:ctl.roll" title="Roll sideways (G)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18.5 3v4h-4"/><rect x="8" y="11" width="8" height="8" rx="1"/></svg><span data-i18n="table.roll">Roll</span></button>
+          <button type="button" id="th-place" class="primary" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span data-i18n="ctl.place">Place</span></button>
+          <button type="button" id="th-back" data-i18n-attr="title:table.putBack" title="Put back (Esc)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg><span data-i18n="table.back">Put back</span></button>
+        </div>
+        <p class="tu-tip" id="th-tip"></p>
+        <button type="button" class="tu-chip tu-stop" id="th-stop" hidden data-i18n="resign.button">Stop — no more moves</button>
+      </div>
+    </div>
     <header class="topbar">
       <button type="button" class="btn ghost" id="menu-btn">‹ Menu</button>
       <div class="turn" id="turn" aria-live="polite">
@@ -176,9 +208,7 @@
       </div>
       <span class="room-chip" id="room-chip" hidden></span>
       <div class="top-actions">
-        <button type="button" class="btn icon" id="view3d-btn" aria-pressed="true" title="Flat board" aria-label="Flat board"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg></button>
-        <button type="button" class="btn env-btn" id="env-btn" hidden data-i18n-attr="title:table.env" title="Room"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg><span id="env-name"></span></button>
-        <button type="button" class="btn icon" id="top-btn" hidden aria-pressed="false" data-i18n-attr="title:table.top;aria-label:table.top" title="Top view (V)" aria-label="Top view"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M5 12h14M12 5v14"/></svg></button>
+        <button type="button" class="btn icon" id="view3d-btn" data-i18n-attr="title:table.to3d;aria-label:table.to3d" title="3D table" aria-label="3D table"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg></button>
         <button type="button" class="btn" id="hint-btn" data-i18n="game.hint" data-i18n-attr="title:game.hintTitle" title="Hint (H)">Hint</button>
         <button type="button" class="btn" id="undo-btn" data-i18n="game.undo" data-i18n-attr="title:game.undoTitle" title="Undo (Ctrl+Z)">Undo</button>
         <button type="button" class="btn" id="pause-btn" hidden>Pause</button>
@@ -212,20 +242,6 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- 三维牌桌：拿着棋子时的操作条和提示 -->
-      <div class="table-hud" id="table-hud" hidden>
-        <div class="th-hold" id="th-hold" hidden>
-          <button type="button" class="btn" id="th-rot-ccw" data-i18n-attr="title:ctl.rotLeft;aria-label:ctl.rotLeftAria" title="Rotate left" aria-label="Rotate left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/></svg></button>
-          <button type="button" class="btn" id="th-rot-cw" data-i18n-attr="title:ctl.rotRight;aria-label:ctl.rotRightAria" title="Rotate right" aria-label="Rotate right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 4.5V9h-4.5"/></svg></button>
-          <button type="button" class="btn" id="th-flip" title="Mirror" aria-label="Mirror"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 2.6"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/></svg><span id="th-flip-label"></span></button>
-          <button type="button" class="btn" id="th-roll" hidden data-i18n-attr="title:ctl.roll;aria-label:ctl.rollAria" title="Roll sideways (G)" aria-label="Roll sideways"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18.5 3v4h-4"/><rect x="8" y="11" width="8" height="8" rx="1"/></svg></button>
-          <button type="button" class="btn primary" id="th-place" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span data-i18n="ctl.place">Place</span></button>
-          <button type="button" class="btn" id="th-back" data-i18n-attr="title:table.putBack;aria-label:table.putBack" title="Put back" aria-label="Put back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-        </div>
-        <p class="th-tip" id="th-tip"></p>
-        <button type="button" class="btn ghost danger-text th-stop" id="th-stop" hidden data-i18n="resign.button">Stop — no more moves</button>
       </div>
 
       <aside class="dock" id="dock">

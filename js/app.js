@@ -2301,6 +2301,7 @@
     renderPlayers();
     renderDock();
     drawBoard();
+    renderTableUi();
   }
 
   function peersKnown() { return !!(online && online.peers); }
@@ -2345,6 +2346,10 @@
     }
     root.style.setProperty('--turn', color);
     $('turn-text').textContent = text;
+    if (tableActive()) {
+      $('tu-turn-text').textContent = text;
+      $('tu-turn').style.setProperty('--c', color);
+    }
     var placed = st.actions.filter(function (a) { return a.type === 'place'; }).length;
     $('turn-move').textContent = replaying ? t('move.step', { k: replay.step, n: replay.n })
       : st.over ? t('move.total', { n: placed }) : t('move.nth', { n: placed + 1 });
@@ -3093,31 +3098,65 @@
 
   function toggleTopView() {
     if (!tableActive()) return;
-    var on = table.setTopView(!table.topView);
-    $('top-btn').setAttribute('aria-pressed', on ? 'true' : 'false');
+    table.setTopView(!table.topView);
+    renderTableTools();
   }
 
+  // 三维牌桌的界面（浮在场景上的面板）：顶栏、玩家列表、拿着棋子时的操作条
   function renderTableTools() {
     var on = tableActive();
-    var b = $('view3d-btn');
-    b.setAttribute('aria-pressed', prefs.view3d ? 'true' : 'false');
-    b.title = t(on ? 'table.to2d' : 'table.to3d');
-    b.setAttribute('aria-label', b.title);
-    b.disabled = !prefs.view3d && tableFailed;
-    $('env-btn').hidden = !on;
-    $('top-btn').hidden = !on;
-    if (on) {
-      var env = table.environments.find(function (e) { return e.id === table.environment; });
-      $('env-name').textContent = env ? t('env.' + env.id) : '';
-    }
+    $('table-ui').hidden = !on;
+    // 平面棋盘的顶栏里：切到三维牌桌的按钮（三维不可用时不显示）
+    $('view3d-btn').hidden = on || tableFailed || !window.BlockTurfTable;
+    if (!on) return;
+    $('game').dataset.env = table.environment || '';
+    var env = table.environments.find(function (e) { return e.id === table.environment; });
+    $('tu-env-name').textContent = env ? t('env.' + env.id) : '';
+    $('tu-top').setAttribute('aria-pressed', table.topView ? 'true' : 'false');
+    $('tu-hints').setAttribute('aria-pressed', prefs.hints ? 'true' : 'false');
+    $('tu-sound').setAttribute('aria-pressed', prefs.sound ? 'true' : 'false');
+    renderTableUi();
+  }
+
+  function renderTableUi() {
+    if (!tableActive()) return;
+    var st = game.state;
+    // 返回 / 离开房间
+    $('tu-back-label').textContent = $('menu-btn').textContent.replace(/^[‹<]\s*/, '');
+    $('tu-back').title = $('tu-back-label').textContent;
+    // 轮到谁
+    var turn = $('tu-turn');
+    var thinking = !st.over && !isReplay() && cur().type === 'ai';
+    turn.style.setProperty('--c', st.over ? '#888' : $('game').style.getPropertyValue('--turn') || colorVar(cur()));
+    turn.classList.toggle('mine', !isReplay() && canAct());
+    turn.classList.toggle('thinking', thinking);
+    $('tu-turn-text').textContent = $('turn-text').textContent;
+    // 和平面版顶栏同步的按钮
+    [['tu-hint', 'hint-btn'], ['tu-undo', 'undo-btn'], ['tu-pause', 'pause-btn'], ['tu-result', 'result-btn']].forEach(function (m) {
+      var src = $(m[1]), dst = $(m[0]);
+      dst.hidden = src.hidden;
+      dst.disabled = src.disabled;
+    });
+    $('tu-pause').textContent = $('pause-btn').textContent;
+    $('tu-room').hidden = $('room-chip').hidden;
+    $('tu-room').textContent = $('room-chip').textContent;
+    // 玩家
+    var onlineMode = isOnlineGame();
+    $('tu-players').innerHTML = st.players.map(function (pl, i) {
+      var left = pl.remaining.filter(Boolean).length;
+      var on = i === st.current && !st.over;
+      var off = onlineMode && pl.type === 'human' && pl.owner && !isPeerOnline(pl.owner);
+      var sub = pl.type === 'ai' ? levelLabel(pl.level) : '';
+      var right = pl.resigned ? th('card.stopped') : pl.done && !st.over ? th('card.blocked') : th('card.leftHtml', { n: left });
+      return '<li class="' + (on ? 'on' : '') + (pl.done ? ' out' : '') + '" data-n="' + left + '" style="--c:' + colorVar(pl) + '"><i></i>' +
+        '<span>' + escapeHtml(nameOf(pl)) + (sub ? '<small>' + escapeHtml(sub) + '</small>' : '') + '</span>' +
+        (off ? '<b class="off" title="' + th('card.offline') + '"></b>' : '') + '<em>' + right + '</em></li>';
+    }).join('');
     renderTableHud();
   }
 
   function renderTableHud() {
-    var on = tableActive();
-    var hud = $('table-hud');
-    hud.hidden = !on;
-    if (!on) return;
+    if (!tableActive()) return;
     var act = !isReplay() && canAct();
     var has = act && game.sel.piece >= 0;
     $('th-hold').hidden = !has;
@@ -4330,15 +4369,24 @@
     $('place-btn').addEventListener('click', tryPlace);
     $('resign-btn').addEventListener('click', resign);
     // 三维牌桌
-    $('view3d-btn').addEventListener('click', function () {
-      prefs.view3d = !prefs.view3d;
+    function setView3d(on) {
+      prefs.view3d = on;
       savePrefs();
       syncTableMode(true);
       renderGame();
-    });
-    $('env-btn').addEventListener('click', function () { if (tableActive()) table.nextEnvironment(); });
-    $('top-btn').addEventListener('click', toggleTopView);
-    $('th-rot-ccw').addEventListener('click', function () { rotate(-1); });
+    }
+    $('view3d-btn').addEventListener('click', function () { setView3d(true); });
+    $('tu-view').addEventListener('click', function () { setView3d(false); });
+    $('tu-back').addEventListener('click', function () { $('menu-btn').click(); });
+    $('tu-env').addEventListener('click', function () { if (tableActive()) table.nextEnvironment(); });
+    $('tu-top').addEventListener('click', toggleTopView);
+    $('tu-hints').addEventListener('click', function () { $('opt-hints').checked = prefs.hints = !prefs.hints; savePrefs(); renderTableTools(); drawBoard(); });
+    $('tu-sound').addEventListener('click', function () { $('sound-btn').click(); renderTableTools(); });
+    $('tu-help').addEventListener('click', function () { $('help-btn').click(); });
+    $('tu-hint').addEventListener('click', function () { $('hint-btn').click(); });
+    $('tu-undo').addEventListener('click', function () { $('undo-btn').click(); });
+    $('tu-pause').addEventListener('click', function () { $('pause-btn').click(); });
+    $('tu-result').addEventListener('click', function () { $('result-btn').click(); });
     $('th-rot-cw').addEventListener('click', function () { rotate(1); });
     $('th-flip').addEventListener('click', flip);
     $('th-roll').addEventListener('click', roll);
