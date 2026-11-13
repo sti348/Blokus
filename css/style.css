@@ -1471,10 +1471,16 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
   #tu-env-name, .tu-back b, .tu-room { display: none; }
   .tu-tools { flex: 1; gap: 4px; flex-wrap: nowrap; }
   #tu-pause, #tu-result { padding: 0 10px; font-size: 13px; }
-  .tu-turn { position: static; transform: none; order: 3; height: 34px; padding: 0 14px 0 10px; font-size: 14px; max-width: calc(100vw - 160px); }
+  .tu-turn { position: static; transform: none; order: 3; height: 34px; padding: 0 14px 0 10px; font-size: 14px; max-width: calc(100vw - 20px); }
   /* 玩家：顶栏下面一排小标签 */
-  .tu-players { top: calc(max(10px, env(safe-area-inset-top)) + 40px); left: auto; right: max(10px, env(safe-area-inset-right)); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; padding: 3px; min-width: 0; max-width: calc(100vw - 170px); border-radius: 18px; }
-  .tu-players li { padding: 4px 8px; gap: 5px; border-radius: 999px; }
+  .tu-players {
+    top: calc(max(10px, env(safe-area-inset-top)) + 82px); left: max(10px, env(safe-area-inset-left)); right: auto;
+    display: flex; flex-wrap: nowrap; gap: 2px; padding: 3px; min-width: 0; max-width: calc(100vw - 20px);
+    overflow-x: auto; scrollbar-width: none; border-radius: 999px;
+  }
+  .tu-players::-webkit-scrollbar { display: none; }
+  .tu-players li { flex: none; padding: 4px 9px 4px 7px; gap: 5px; border-radius: 999px; line-height: 1; }
+  .tu-players li .off { display: none; }
   .tu-players span, .tu-players small, .tu-players em { display: none; }
   .tu-players li::after { content: attr(data-n); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .tu-bottom { gap: 8px; bottom: max(10px, env(safe-area-inset-bottom)); }

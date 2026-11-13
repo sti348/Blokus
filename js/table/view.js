@@ -51,7 +51,7 @@ function cellGeometry(poly, y0, h, inset, bevel) {
   for (let i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], -pts[i][1]);
   sh.closePath();
   const b = Math.min(bevel, h * 0.3);
-  const g = new THREE.ExtrudeGeometry(sh, { depth: Math.max(0.01, h - 2 * b), bevelEnabled: true, bevelThickness: b, bevelSize: b * 0.9, bevelSegments: 2, curveSegments: 1 });
+  const g = new THREE.ExtrudeGeometry(sh, { depth: Math.max(0.01, h - 2 * b), bevelEnabled: b > 0, bevelThickness: b, bevelSize: b * 0.9, bevelSegments: 2, curveSegments: 1 });
   g.rotateX(-Math.PI / 2);
   g.translate(0, y0 + b, 0);
   return g.index ? g.toNonIndexed() : g;
@@ -76,14 +76,84 @@ function mergeGeometries(parts) {
 }
 
 // 棋子模型：以各格中心的平均点为原点
+// 多边形的外轮廓：把各格的边收集起来，去掉两格共用的边，剩下的连成一圈；共用的边另外返回（画成格子之间的细线）
+function unionOutline(polys) {
+  const key = (p) => Math.round(p[0] * 1000) + ',' + Math.round(p[1] * 1000);
+  const edges = new Map();
+  polys.forEach((poly) => {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const ka = key(a), kb = key(b);
+      const k = ka < kb ? ka + '|' + kb : kb + '|' + ka;
+      const e = edges.get(k);
+      if (e) e.n++;
+      else edges.set(k, { a: a, b: b, ka: ka, kb: kb, n: 1 });
+    }
+  });
+  const outer = [], inner = [];
+  edges.forEach((e) => { (e.n === 1 ? outer : inner).push(e); });
+  // 按方向连成一圈（各格多边形的绕向一致，外边的方向也一致）
+  const from = new Map();
+  outer.forEach((e) => { from.set(e.ka, e); });
+  const loop = [];
+  let e = outer[0];
+  for (let guard = 0; e && guard <= outer.length; guard++) {
+    loop.push(e.a);
+    e = from.get(e.kb);
+    if (e === outer[0]) break;
+  }
+  return { loop: loop.length === outer.length ? loop : null, inner: inner };
+}
+
+// 简单多边形向内收 d（斜接）
+function offsetPoly(pts, d) {
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; area += a[0] * b[1] - b[0] * a[1]; }
+  const sign = area > 0 ? 1 : -1;
+  const n = pts.length;
+  const normal = (a, b) => { const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1; return [-dz / l * sign, dx / l * sign]; };
+  return pts.map((p, i) => {
+    const n1 = normal(pts[(i - 1 + n) % n], p), n2 = normal(p, pts[(i + 1) % n]);
+    const mx = n1[0] + n2[0], mz = n1[1] + n2[1];
+    const k = d / Math.max(0.35, (1 + n1[0] * n2[0] + n1[1] * n2[1]));
+    return [p[0] + mx * k, p[1] + mz * k];
+  });
+}
+
+/**
+ * 棋子模型（以各格中心的平均点为原点）。返回 { geo, lines }：
+ *   方格：一格一格的圆角小块（像实体积木那样带缝）
+ *   三角、六边形：整块外轮廓挤出、外边倒圆角，块内的格子用顶面上的细线分开
+ *   立方体、三棱柱：各格紧贴成一个实体，格子之间用细线分开
+ */
 function pieceGeometry(set, pieceIndex, orient, board) {
   const shape = Geom.orientShape(set, pieceIndex, orient);
-  const parts = shape.map((k) => {
-    const h = board.dims === 3 ? board.layerH : board.pieceH;
-    const y0 = board.dims === 3 ? k.y : -board.pieceH / 2;
-    return cellGeometry(k.poly, y0, h * (board.dims === 3 ? 0.94 : 1), board.dims === 3 ? 0.94 : 0.9, board.dims === 3 ? 0.07 : 0.06);
-  });
-  return mergeGeometries(parts);
+  if (board.dims === 3) {
+    const parts = shape.map((k) => cellGeometry(k.poly, k.y, board.layerH, 1, 0));
+    const geo = mergeGeometries(parts);
+    const lines = new THREE.EdgesGeometry(geo, 25);
+    return { geo: geo, lines: lines };
+  }
+  if (board.kind === 'square') {
+    const parts = shape.map((k) => cellGeometry(k.poly, -board.pieceH / 2, board.pieceH, 0.9, 0.06));
+    return { geo: mergeGeometries(parts), lines: null };
+  }
+  const u = unionOutline(shape.map((k) => k.poly));
+  if (!u.loop) {
+    const parts = shape.map((k) => cellGeometry(k.poly, -board.pieceH / 2, board.pieceH, 0.92, 0.04));
+    return { geo: mergeGeometries(parts), lines: null };
+  }
+  const bevel = 0.045;
+  const geo = cellGeometry(offsetPoly(u.loop, 0.035 + bevel * 0.9), -board.pieceH / 2, board.pieceH, 1, bevel);
+  const pos = [];
+  const y = board.pieceH / 2 + 0.002;
+  u.inner.forEach((e) => { pos.push(e.a[0], y, e.a[1], e.b[0], y, e.b[1]); });
+  let lines = null;
+  if (pos.length) {
+    lines = new THREE.BufferGeometry();
+    lines.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  }
+  return { geo: geo, lines: lines };
 }
 
 function polyGeometry(poly, y, inset) {
@@ -235,11 +305,24 @@ export function createTableView(host, api) {
     return frame(az, pol, pts);
   }
 
-  function lockCamera() {
+  // 立体棋盘和三角棋盘：镜头自由环顾，不锁定（只在开局、换座位或画面变化时取一次景）
+  function freeCam() { return !!V.board && (V.board.dims === 3 || V.board.kind === 'tri'); }
+
+  function lockCamera(force) {
     const st = api.state();
     if (!st || !V.board) return;
     const p = api.viewSeat();
     if (p == null || p < 0) { rig.lock = null; rig.holdLock = null; return; }
+    if (freeCam()) {
+      rig.lock = null; rig.holdLock = null;
+      if (!force && V.framedSeat === p) return;
+      V.framedSeat = p;
+      const v = seatView(p, false);
+      rig.goal.az = nearestAngle(rig.goal.az, v.az);
+      rig.goal.pol = v.pol; rig.goal.dist = v.dist; rig.goal.target.copy(v.target);
+      rig.spin = 0;
+      return;
+    }
     rig.lock = seatView(p, false);
     rig.holdLock = api.canAct() ? seatView(p, true) : null;
     rig.lock.az = nearestAngle(rig.goal.az, rig.lock.az);
@@ -356,9 +439,29 @@ export function createTableView(host, api) {
     return geoCache.get(k);
   }
 
+  // 棋子的格子分隔线：棋子颜色调暗
+  function lineMat(color) {
+    const c = new THREE.Color(color).multiplyScalar(0.45);
+    return new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: 0.75 });
+  }
+
+  function applyGeo(pc, orient) {
+    const g = geoFor(pc.piece, orient);
+    pc.mesh.geometry = g.geo;
+    if (g.lines) {
+      if (!pc.lines) {
+        pc.lines = new THREE.LineSegments(g.lines, pc.lineMat);
+        pc.lines.userData.sharedGeo = true;
+        pc.lines.raycast = () => {};
+        pc.mesh.add(pc.lines);
+      } else pc.lines.geometry = g.lines;
+      pc.lines.visible = true;
+    } else if (pc.lines) pc.lines.visible = false;
+  }
+
   function buildPieces() {
     disposeGroup(pieceGroup);
-    geoCache.forEach((g) => g.dispose());
+    geoCache.forEach((g) => { g.geo.dispose(); if (g.lines) g.lines.dispose(); });
     geoCache.clear();
     const st = api.state(), set = st.set;
     V.P = st.players.map((pl, p) => {
@@ -368,10 +471,11 @@ export function createTableView(host, api) {
           color: col, roughness: 0.45, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.45,
           specularIntensity: 0.55, envMapIntensity: 0.35, emissive: col, emissiveIntensity: 0.05
         });
-        const mesh = new THREE.Mesh(geoFor(i, piece.display), mat);
+        const mesh = new THREE.Mesh(geoFor(i, piece.display).geo, mat);
         mesh.userData.sharedGeo = true;
         mesh.castShadow = true; mesh.receiveShadow = true;
-        const pc = { mesh: mesh, mat: mat, player: p, piece: i, orient: piece.display, where: 'tray', slot: null, glow: 0, lift: 0, action: null };
+        const pc = { mesh: mesh, mat: mat, player: p, piece: i, orient: piece.display, where: 'tray', slot: null, glow: 0, lift: 0, action: null, lineMat: lineMat(COLORS[pl.color] || '#888888') };
+        applyGeo(pc, piece.display);
         mesh.userData.pc = pc;
         pieceGroup.add(mesh);
         return pc;
@@ -413,7 +517,7 @@ export function createTableView(host, api) {
   function setGeo(pc, orient) {
     if (pc.orient === orient) return;
     pc.orient = orient;
-    pc.mesh.geometry = geoFor(pc.piece, orient);
+    applyGeo(pc, orient);
   }
 
   // 落子后棋子在棋盘上的位置（各格中心的平均点）
@@ -865,7 +969,10 @@ export function createTableView(host, api) {
     const narrow = w / h < 0.8;
     if (V.board && narrow !== V.narrow) { V.narrow = narrow; layoutTrays(true); }
     V.narrow = narrow;
-    if (V.board) lockCamera();
+    // 自由镜头时，只有画面比例明显变了（如横竖屏切换）才重新取景
+    const big = !V.lastAspect || Math.abs(camera.aspect / V.lastAspect - 1) > 0.12;
+    if (big) V.lastAspect = camera.aspect;
+    if (V.board) lockCamera(big);
   }
 
   const perf = { n: 0, sum: 0, slow: 0, warm: 0 };
@@ -947,13 +1054,15 @@ export function createTableView(host, api) {
       buildPieces();
       syncPieces(false);
       V.actionsSeen = st.actions.length;
+      V.framedSeat = null;
       resize();
-      lockCamera();
+      lockCamera(true);
       // 一开始从高处慢慢落到座位
-      rig.az = rig.goal.az = rig.lock ? rig.lock.az : 0;
-      rig.pol = (rig.lock ? rig.lock.pol : 0.8) + 0.25;
-      rig.dist = (rig.lock ? rig.lock.dist : 60) + 24;
-      if (rig.lock) rig.target.copy(rig.lock.target);
+      const L = rig.lock || rig.goal;
+      rig.az = rig.goal.az = L.az;
+      rig.pol = L.pol + 0.25;
+      rig.dist = L.dist + 24;
+      rig.target.copy(L.target);
     },
     // 局面或选中的棋子变了（每次 app 重画时调用）
     update() {
@@ -983,7 +1092,7 @@ export function createTableView(host, api) {
     },
     turn: turn,
     shake() { V.shake = 0.35; },
-    setTopView(on) { rig.top = !!on; lockCamera(); return rig.top; },
+    setTopView(on) { rig.top = !!on; lockCamera(true); return rig.top; },
     get topView() { return rig.top; },
     setEnvironment(id) {
       const fade = host.querySelector('.table-fade');
