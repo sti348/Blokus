@@ -985,6 +985,7 @@ export function createTableView(host, api) {
   const arDebug = new URLSearchParams(location.search).has('ardebug');
   const arSimNoPlane = new URLSearchParams(location.search).get('arsim') === 'noplane';   // 模拟一直找不到平面
   const AR = {
+    placePos: new THREE.Vector3(), ptY: [],
     on: false, session: null, hitSource: null, pointSource: null, placed: false, found: false, guess: false, size: 1, yaw: 0, saved: null,
     searchT: 0, shownSec: -1, err: '', frames: 0,
     root: new THREE.Group(), pivot: new THREE.Group(), extra: new THREE.Group(), simFloor: null
@@ -1080,6 +1081,12 @@ export function createTableView(host, api) {
       return false;
     }
     session.addEventListener('end', endAR);
+    const ref = renderer.xr.getReferenceSpace();
+    if (ref && ref.addEventListener) {
+      ref.addEventListener('reset', () => {
+        if (AR.on && AR.placed && !AR.anchor) { view.replaceAR(); AR.wasReset = true; arNotify(); }
+      });
+    }
     beginAR(session);
     return true;
   }
@@ -1087,7 +1094,7 @@ export function createTableView(host, api) {
   function beginAR(session) {
     AR.on = true; AR.session = session; AR.placed = false; AR.found = false; AR.guess = false; AR.size = 1; AR.yaw = 0;
     AR.searchT = 0; AR.shownSec = -1; AR.err = ''; AR.frames = 0; AR.noPlaneT = 0; AR.pendingPlace = false; AR.anchor = null;
-    AR.lost = false; AR.lostT = 0; AR.jumpN = 0; AR.anchorJumpT = 0; AR.dbg = '';
+    AR.lost = false; AR.lostT = 0; AR.jumpN = 0; AR.dbg = ''; AR.ptY = []; AR.kind = ''; AR.placeKind = '';
     reticle.visible = foot.visible = false;
     AR.saved = {
       bg: scene.background, fog: scene.fog, near: camera.near, far: camera.far, exposure: renderer.toneMappingExposure,
@@ -1157,21 +1164,20 @@ export function createTableView(host, api) {
 
   function doPlace(xrFrame) {
     AR.pendingPlace = false;
+    AR.wasReset = false;
     AR.root.position.copy(reticle.position);
+    AR.placePos.copy(reticle.position);
+    AR.placeKind = AR.kind;
     AR.root.visible = true;
     AR.placed = true;
     reticle.visible = foot.visible = false;
-    // 锚点：把棋盘钉在真实的平面上。手机一边走一边修正对房间的理解，棋盘跟着真实位置一起修正，不会漂
-    if (xrFrame) {
+    // 锚点：只挂在真正识别到的平面上（悬空的锚点没有依附，ARCore 一修正追踪就会跑偏）。
+    // 手机一边走一边修正对房间的理解，棋盘跟着平面一起做小幅修正
+    if (xrFrame && AR.kind === 'plane') {
       let req = null;
       try {
         const res = AR.lastResult;
-        const space = renderer.xr.getReferenceSpace();
         if (res && res.createAnchor) req = res.createAnchor();
-        else if (xrFrame.createAnchor && typeof XRRigidTransform !== 'undefined') {
-          const p = reticle.position;
-          req = xrFrame.createAnchor(new XRRigidTransform({ x: p.x, y: p.y, z: p.z }), space);
-        }
       } catch (e) { req = null; }
       if (req) {
         req.then((a) => {
@@ -1205,13 +1211,19 @@ export function createTableView(host, api) {
     return false;
   }
 
-  // 找不到平面时：准星先放在面前（手机前方约半米、低一些），照样可以点屏幕放下
-  function guessSpot() {
+  // 没有平面时：用最近一批合理的特征点估计桌面 / 地面的高度（取中位数，个别错点不影响），
+  // 视线和这个高度的水平面的交点就是准星
+  function estSpot(cp) {
+    const ys = AR.ptY;
+    if (ys.length < 8) return false;
+    const sorted = ys.slice().sort((a, b) => a - b);
+    const y = sorted[sorted.length >> 1];
     const m = arCam().matrixWorld.elements;
-    const f = arC.set(-m[8], 0, -m[10]);
-    if (f.lengthSq() < 0.04) f.set(m[4], 0, m[6]);     // 几乎垂直朝下看：用手机的「上」方向当前方
-    f.normalize();
-    arV.set(m[12] + f.x * 0.5, m[13] - 0.35, m[14] + f.z * 0.5);
+    const dx = -m[8], dy = -m[9], dz = -m[10];
+    if (dy > -0.2) return false;                 // 几乎平视：交点太远，不可靠
+    const t = (y - cp.y) / dy;
+    arV.set(cp.x + dx * t, y, cp.z + dz * t);
+    return plausible(cp);
   }
 
   // 棋盘轮廓（还没放下时显示在准星处，表示棋盘会放多大）
@@ -1258,9 +1270,13 @@ export function createTableView(host, api) {
         if (xrFrame && !AR.lost) {
           hit = hitFrom(xrFrame, AR.hitSource, true) && plausible(cp);
           if (hit) kind = 'plane';
-          AR.noPlaneT = hit ? 0 : AR.noPlaneT + dt;
-          // 特征点只在 2 秒都没找到平面时才用
-          if (!hit && AR.noPlaneT > 2 && hitFrom(xrFrame, AR.pointSource, false) && plausible(cp)) { hit = true; kind = 'point'; }
+          else AR.lastResult = null;
+          // 特征点不直接当准星：只收集合理的点来估计表面高度
+          if (!hit && hitFrom(xrFrame, AR.pointSource, false) && plausible(cp)) {
+            AR.ptY.push(arV.y);
+            if (AR.ptY.length > 40) AR.ptY.shift();
+          }
+          if (!hit && estSpot(cp)) { hit = true; kind = 'est'; }
         }
       } else {
         arRay.setFromCamera(new THREE.Vector2(0, 0), camera);
@@ -1270,11 +1286,12 @@ export function createTableView(host, api) {
       // 位置突然跳得很远：要连续出现一会儿才相信（不是一闪而过的错点）
       if (hit && reticle.visible && arV.distanceTo(reticle.position) > 0.3) {
         AR.jumpN++;
-        if (AR.jumpN < 10) { hit = true; arV.copy(reticle.position); kind += '?'; }
+        if (AR.jumpN < 10) { hit = true; arV.copy(reticle.position); kind += '?'; AR.lastResult = null; }
         else AR.jumpN = 0;
       } else AR.jumpN = 0;
       AR.searchT += dt;
-      if (!hit && AR.searchT > 5 && !AR.lost) { guessSpot(); hit = true; guess = true; kind = 'guess'; }
+      AR.kind = kind;
+      guess = hit && kind.indexOf('est') === 0;      // 按特征点估计的表面（不是识别到的平面）
       // 还在找的时候每秒刷新一次提示（显示找了几秒，也说明画面没卡住）
       const sec = Math.floor(AR.searchT);
       if (!AR.found && sec !== AR.shownSec) { AR.shownSec = sec; arNotify(); }
@@ -1300,12 +1317,10 @@ export function createTableView(host, api) {
       const pose = xrFrame.getPose(AR.anchor.anchorSpace, renderer.xr.getReferenceSpace());
       if (pose) {
         arV.setFromMatrixPosition(arM.fromArray(pose.transform.matrix));
-        // 锚点突然跳得很远：多半是定位刚恢复时的错值，持续一秒以上才跟过去
-        const far = AR.root.position.distanceTo(arV) > 0.3;
-        AR.anchorJumpT = far ? AR.anchorJumpT + dt : 0;
+        // 锚点只做小幅修正：离放下的位置超过 20 厘米的一律不跟（多半是追踪出错，跟过去棋盘就飞了）
+        const far = arV.distanceTo(AR.placePos) > 0.2;
         if (!far) AR.root.position.lerp(arV, 1 - Math.exp(-dt * 10));
-        else if (AR.anchorJumpT > 1) { AR.root.position.copy(arV); AR.anchorJumpT = 0; }
-        kind = far ? 'anchor-jump' : 'anchor';
+        kind = (far ? 'anchor-far ' : 'anchor ') + arV.distanceTo(AR.placePos).toFixed(2);
       }
     }
     // 诊断（?ardebug=1）：定位、命中方式、离手机多远、锚点
@@ -1314,7 +1329,7 @@ export function createTableView(host, api) {
       if (AR.dbgT > 0.5) {
         AR.dbgT = 0;
         const tgt = AR.placed ? AR.root.position : reticle.position;
-        AR.dbg = (AR.lost ? 'LOST' : 'track') + ' ' + (kind || '-') + ' d=' + cp.distanceTo(tgt).toFixed(2) + 'm h=' + (cp.y - tgt.y).toFixed(2) +
+        AR.dbg = (AR.lost ? 'LOST' : 'track') + ' ' + (kind || '-') + (AR.placed ? ' @' + AR.placeKind : ' pts' + AR.ptY.length) + ' d=' + cp.distanceTo(tgt).toFixed(2) + 'm h=' + (cp.y - tgt.y).toFixed(2) +
           'm ' + (AR.anchor ? 'anc' : 'noanc') + ' f' + AR.frames;
         arNotify();
       }
@@ -1517,12 +1532,12 @@ export function createTableView(host, api) {
     replaceAR() {
       if (!AR.on) return;
       dropAnchor();
-      AR.placed = false; AR.found = false; AR.guess = false; AR.searchT = 0; AR.shownSec = -1; AR.noPlaneT = 0; AR.pendingPlace = false; AR.jumpN = 0;
+      AR.placed = false; AR.found = false; AR.guess = false; AR.searchT = 0; AR.shownSec = -1; AR.noPlaneT = 0; AR.pendingPlace = false; AR.jumpN = 0; AR.ptY = [];
       reticle.visible = foot.visible = false;
       arNotify();
     },
     arFail() { return AR.fail || ''; },
-    arState() { return { on: AR.on, live: !!AR.session, placed: AR.placed, found: AR.found, guess: AR.guess, sec: Math.floor(AR.searchT), err: AR.err, anchored: !!AR.anchor, lost: !!AR.lost, dbg: arDebug ? AR.dbg : '' }; },
+    arState() { return { on: AR.on, live: !!AR.session, placed: AR.placed, found: AR.found, guess: AR.guess, sec: Math.floor(AR.searchT), err: AR.err, anchored: !!AR.anchor, lost: !!AR.lost, reset: !!AR.wasReset, dbg: arDebug ? AR.dbg : '' }; },
     // 调试和自动测试用
     _debug: { V: V, rig: rig, camera: camera, play: play, api: api, AR: AR, renderer: renderer, xrCam: () => arCam() }
   };
