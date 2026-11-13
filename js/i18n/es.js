@@ -290,7 +290,7 @@
     'table.arMove': 'Mover tablero',
     'table.arReset': 'El seguimiento se reinició: vuelve a colocar el tablero',
     'table.arLost': 'Seguimiento perdido (poca textura, demasiado brillo u oscuridad) · mueve el móvil despacio y apunta a una mesa con dibujo y bien iluminada',
-    'table.arTip': 'Toca o arrastra una de tus piezas · arrastra un espacio vacío para mover el tablero · dos dedos para tamaño / girar · ▲▼ altura · puedes caminar alrededor',
+    'table.arTip': 'Toca o arrastra una de tus piezas · dos dedos para tamaño / girar · ▲▼ altura · «Mover tablero» para cambiarlo de sitio · puedes caminar alrededor',
     'table.arManual': 'Mueve el móvil para llevar el tablero sobre la mesa · ajusta la altura con ▲▼ hasta que quede sobre la mesa · toca la pantalla o «Fijar aquí»',
     'table.arUp': 'Subir',
     'table.arDown': 'Bajar',

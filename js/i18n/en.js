@@ -294,7 +294,7 @@
     'table.arMove': 'Move board',
     'table.arReset': 'Tracking was reset — please place the board again',
     'table.arLost': 'Tracking lost (too little texture, too shiny or too dark) · move the phone slowly and aim at a patterned, well-lit table',
-    'table.arTip': 'Tap or drag one of your pieces · drag empty space to move the board · two fingers to resize / turn · ▲▼ for height · you can walk around it',
+    'table.arTip': 'Tap or drag one of your pieces · two fingers to resize / turn · ▲▼ for height · "Move board" to put it somewhere else · you can walk around it',
     'table.arManual': 'Move the phone to bring the board over the table · use ▲▼ to set its height so it sits on the table · tap the screen or "Fix here" to fix it',
     'table.arUp': 'Raise',
     'table.arDown': 'Lower',

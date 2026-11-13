@@ -290,7 +290,7 @@
     'table.arMove': 'Brett versetzen',
     'table.arReset': 'Das Tracking wurde zurückgesetzt – bitte lege das Brett neu ab',
     'table.arLost': 'Tracking verloren (zu wenig Struktur, zu glänzend oder zu dunkel) · bewege das Handy langsam und ziele auf einen gemusterten, hellen Tisch',
-    'table.arTip': 'Tippe oder ziehe einen deiner Steine · leere Fläche ziehen verschiebt das Brett · zwei Finger: Größe / Drehen · ▲▼ Höhe · du kannst drum herumgehen',
+    'table.arTip': 'Tippe oder ziehe einen deiner Steine · zwei Finger: Größe / Drehen · ▲▼ Höhe · „Brett versetzen" für einen anderen Platz · du kannst drum herumgehen',
     'table.arManual': 'Bewege das Handy, bis das Brett über dem Tisch ist · mit ▲▼ die Höhe einstellen, bis es auf dem Tisch liegt · tippe auf den Bildschirm oder „Hier fixieren"',
     'table.arUp': 'Höher',
     'table.arDown': 'Tiefer',

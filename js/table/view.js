@@ -833,6 +833,9 @@ export function createTableView(host, api) {
 
   canvas.addEventListener('pointerdown', (e) => {
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
+    // 主指针按下 = 此刻屏幕上没有别的手指：清掉之前没收到抬起的「幽灵手指」，
+    // 否则下一根手指会被当成双指缩放（棋盘越拖越小）
+    if (e.isPrimary) { pointers.clear(); pinch = 0; twist = null; }
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     rig.spin = 0;
     if (pointers.size === 2) {
@@ -880,7 +883,7 @@ export function createTableView(host, api) {
         if (press.moved) aim(e.clientX, e.clientY, press.touch ? 56 : 0);
       } else if (press.moved) {
         if (AR.on) {
-          if (AR.placed) panAR(dx, dy);             // AR：拖空白处平移棋盘
+          // AR：单指拖空白处什么都不做（点棋子点偏了不会把棋盘推走）；换位置用「重新摆放」
         } else if (press.button === 2 || e.shiftKey) {
           const s = rig.dist * 0.0012;
           const cx = Math.cos(rig.az), sx = Math.sin(rig.az);
@@ -933,6 +936,13 @@ export function createTableView(host, api) {
   }
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
+  // 抬起 / 取消没送到画布时（手指移到浮层按钮上、系统取消触摸等），也把这根手指从记录里去掉
+  ['pointerup', 'pointercancel'].forEach((type) => window.addEventListener(type, (e) => {
+    if (e.target === canvas || !pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) { pinch = 0; twist = null; }
+    if (pointers.size === 0) press = null;
+  }));
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -987,7 +997,7 @@ export function createTableView(host, api) {
   // 把棋盘和棋子叠到摄像头画面里：虚拟房间和桌子都不画，只画对局空间。
   // 不自动识别平面，手动摆放：
   //   摆放中：棋盘浮在手机前方，跟着手机走；▲▼ 调高低；点屏幕或「固定」把它固定在空间里
-  //   固定后：棋盘不再跟着手机（靠 ARCore 的手机定位保持在原地）；拖空白处平移，双指缩放 / 旋转，▲▼ 微调高低
+  //   固定后：棋盘不再跟着手机（靠 ARCore 的手机定位保持在原地）；双指缩放 / 旋转，▲▼ 微调高低，换位置用「重新摆放」
   // ?arsim=1：没有 AR 设备时用普通画面模拟这套流程，便于调试。
   const arSim = new URLSearchParams(location.search).has('arsim');
   const arDebug = new URLSearchParams(location.search).has('ardebug');
@@ -1154,14 +1164,6 @@ export function createTableView(host, api) {
     if (!AR.on) return;
     if (AR.placed) AR.root.position.y += dy;
     else AR.below = THREE.MathUtils.clamp(AR.below - dy, 0.05, 1.6);
-  }
-
-  // 固定后单指拖空白处：在水平面上平移棋盘（屏幕上往哪拖，棋盘就往哪走）
-  function panAR(dx, dy) {
-    arAxes();
-    const d = arC.setFromMatrixPosition(arCam().matrixWorld).distanceTo(AR.root.position);
-    const k = Math.max(0.15, d) * 0.0016;
-    AR.root.position.addScaledVector(arR, dx * k).addScaledVector(arF, -dy * k);
   }
 
   function updateAR(xrFrame, dt) {

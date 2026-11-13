@@ -290,7 +290,7 @@
     'table.arMove': 'Mover tabuleiro',
     'table.arReset': 'O rastreamento foi reiniciado — posicione o tabuleiro de novo',
     'table.arLost': 'Rastreamento perdido (pouca textura, muito brilho ou escuro demais) · mova o celular devagar e mire numa mesa estampada e bem iluminada',
-    'table.arTip': 'Toque ou arraste uma das suas peças · arraste o vazio para mover o tabuleiro · dois dedos: tamanho / girar · ▲▼ altura · dá para andar ao redor',
+    'table.arTip': 'Toque ou arraste uma das suas peças · dois dedos: tamanho / girar · ▲▼ altura · «Mover tabuleiro» para mudar de lugar · dá para andar ao redor',
     'table.arManual': 'Mova o celular para levar o tabuleiro até a mesa · ajuste a altura com ▲▼ até ele ficar sobre a mesa · toque na tela ou em «Fixar aqui»',
     'table.arUp': 'Subir',
     'table.arDown': 'Descer',

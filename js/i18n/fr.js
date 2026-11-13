@@ -290,7 +290,7 @@
     'table.arMove': 'Déplacer le plateau',
     'table.arReset': 'Le suivi a été réinitialisé : repose le plateau',
     'table.arLost': 'Suivi perdu (trop peu de texture, trop brillant ou trop sombre) · bouge lentement le téléphone vers une table à motifs et bien éclairée',
-    'table.arTip': 'Touche ou fais glisser une de tes pièces · glisse sur le vide pour déplacer le plateau · deux doigts : taille / rotation · ▲▼ hauteur · tu peux tourner autour',
+    'table.arTip': 'Touche ou fais glisser une de tes pièces · deux doigts : taille / rotation · ▲▼ hauteur · « Déplacer le plateau » pour le changer de place · tu peux tourner autour',
     'table.arManual': 'Déplace le téléphone pour amener le plateau au-dessus de la table · règle la hauteur avec ▲▼ pour qu’il repose sur la table · touche l’écran ou « Fixer ici »',
     'table.arUp': 'Monter',
     'table.arDown': 'Descendre',
