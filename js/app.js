@@ -3183,7 +3183,7 @@
     $('th-stop').hidden = !act || arWait;
     var touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     var tip = ar.on && ar.lost ? t('table.arLost') :
-      arWait ? (ar.found ? t(ar.guess ? 'table.arGuess' : 'table.arPlace') :
+      arWait ? (ar.found ? t('table.arPlace') :
         (ar.reset ? t('table.arReset') + ' · ' : '') + t(ar.sec >= 10 ? 'table.arHard' : 'table.arFind') + (ar.sec >= 2 ? ' ' + ar.sec + 's' : '')) :
       !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : ar.on ? 'table.arTip' : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
     // AR 画面里出错时直接显示出来（方便截图反馈）
