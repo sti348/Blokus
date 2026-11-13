@@ -3182,10 +3182,12 @@
     $('th-place').disabled = !(act && ghostMove());
     $('th-stop').hidden = !act || arWait;
     var touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    var tip = arWait ? (ar.found ? t(ar.guess ? 'table.arGuess' : 'table.arPlace') : t('table.arFind') + (ar.sec >= 2 ? ' ' + ar.sec + 's' : '')) :
+    var tip = ar.on && ar.lost ? t('table.arLost') :
+      arWait ? (ar.found ? t(ar.guess ? 'table.arGuess' : 'table.arPlace') : t('table.arFind') + (ar.sec >= 2 ? ' ' + ar.sec + 's' : '')) :
       !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : ar.on ? 'table.arTip' : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
     // AR 画面里出错时直接显示出来（方便截图反馈）
     if (ar.on && ar.err) tip += ' ⚠ ' + ar.err;
+    if (ar.on && ar.dbg) tip += ' [' + ar.dbg + ']';
     $('th-tip').textContent = tip;
   }
 

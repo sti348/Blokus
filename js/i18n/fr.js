@@ -291,6 +291,7 @@
     'table.arFind': 'Bouge lentement le téléphone vers une table ou le sol…',
     'table.arPlace': 'Surface trouvée · touche l’écran pour poser le plateau ici',
     'table.arGuess': 'Aucune surface trouvée : le cadre jaune est devant toi · touche pour y poser le plateau, ou continue de viser une table (les surfaces brillantes, réfléchissantes ou sombres sont difficiles à détecter)',
+    'table.arLost': 'Suivi perdu (trop peu de texture, trop brillant ou trop sombre) · bouge lentement le téléphone vers une table à motifs et bien éclairée',
     'table.arTip': 'Touche ou fais glisser une de tes pièces · glisse sur le vide pour tourner le plateau · pince pour redimensionner · ou tourne autour',
     'table.arFail': 'La RA n’est pas disponible sur cet appareil (il faut Chrome sur Android et les Services Google Play pour la RA)',
     'keys.flat': 'Choisis une pièce, survole le plateau et clique pour la poser · R pivoter · F retourner · flèches déplacer · Enter poser · Esc annuler',

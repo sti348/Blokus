@@ -291,6 +291,7 @@
     'table.arFind': 'Bewege das Handy langsam und richte es auf einen Tisch oder den Boden …',
     'table.arPlace': 'Fläche gefunden · tippe, um das Brett hier abzulegen',
     'table.arGuess': 'Noch keine Fläche gefunden, der gelbe Rahmen liegt vor dir · tippe, um das Brett dort abzulegen, oder ziele weiter auf einen Tisch (glänzende, spiegelnde oder dunkle Flächen sind schwer zu erkennen)',
+    'table.arLost': 'Tracking verloren (zu wenig Struktur, zu glänzend oder zu dunkel) · bewege das Handy langsam und ziele auf einen gemusterten, hellen Tisch',
     'table.arTip': 'Tippe oder ziehe einen deiner Steine · leere Fläche ziehen dreht das Brett · zwei Finger ändern die Größe · oder geh drum herum',
     'table.arFail': 'AR ist auf diesem Gerät nicht verfügbar (benötigt Chrome auf Android und Google Play-Dienste für AR)',
     'keys.flat': 'Stein wählen, über das Brett fahren und zum Legen klicken · R drehen · F spiegeln · Pfeiltasten bewegen · Enter legen · Esc abbrechen',

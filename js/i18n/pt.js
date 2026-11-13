@@ -291,6 +291,7 @@
     'table.arFind': 'Mova o celular devagar e aponte para uma mesa ou o chão…',
     'table.arPlace': 'Superfície encontrada · toque na tela para pôr o tabuleiro aqui',
     'table.arGuess': 'Nenhuma superfície encontrada ainda, a moldura amarela está à sua frente · toque para pôr o tabuleiro ali, ou continue mirando uma mesa (superfícies lisas, refletivas ou escuras são difíceis de detectar)',
+    'table.arLost': 'Rastreamento perdido (pouca textura, muito brilho ou escuro demais) · mova o celular devagar e mire numa mesa estampada e bem iluminada',
     'table.arTip': 'Toque ou arraste uma das suas peças · arraste o vazio para girar o tabuleiro · pince para redimensionar · ou ande ao redor',
     'table.arFail': 'A RA não está disponível neste aparelho (precisa do Chrome no Android e do Google Play Services para RA)',
     'keys.flat': 'Escolha uma peça, passe sobre o tabuleiro e clique para colocar · R girar · F virar · setas mover · Enter colocar · Esc cancelar',
