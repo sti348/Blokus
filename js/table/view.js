@@ -19,6 +19,7 @@ const COLORS = { blue: '#2a63d6', yellow: '#eeb200', red: '#e03a2e', green: '#1f
 const HOVER = 1.15;          // 拿在手里时离棋盘多高（棋盘单位）
 const BOARD_SPAN = 22;       // 棋盘在桌面上大约多宽（世界单位）
 const TRAY_SCALE_3D = 0.6;   // 立体棋子在托盘里缩小摆放
+const AR_BOARD_M = 0.28;     // AR 里棋盘默认多宽（米），双指可缩放
 
 // 画质档位：先降阴影，最后才降分辨率；高清屏上分辨率不低于 1.5 倍
 const QUALITY = [
@@ -747,7 +748,7 @@ export function createTableView(host, api) {
     const sel = api.selection();
     if (!sel || !api.canAct()) return false;
     const st = api.state();
-    const az = seatAz(api.viewSeat());
+    const az = viewAz();
     const r = Geom.turn(st.set, sel.piece, sel.orient, op, dir, az);
     if (r.orient < 0) return false;
     // 镜像的动画：像真的把棋子左右翻过来一样，绕前后方向的轴转半圈
@@ -771,14 +772,22 @@ export function createTableView(host, api) {
   const pointers = new Map();
   let press = null, pinch = 0;
 
+  const invPlay = new THREE.Matrix4();
+  const localRay = new THREE.Ray();
+
   function setRay(x, y) {
-    const r = canvas.getBoundingClientRect();
-    ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
+    if (AR.session) {
+      // AR：画面铺满整个屏幕（DOM 浮层也是）
+      ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+    } else {
+      const r = canvas.getBoundingClientRect();
+      ndc.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+    }
+    ray.setFromCamera(ndc, AR.on ? arCam() : camera);
   }
 
   function pieceAt(x, y) {
-    if (!api.canAct()) return null;
+    if (!api.canAct() || (AR.on && !AR.placed)) return null;
     setRay(x, y);
     const st = api.state();
     const mine = V.P[st.current].filter((pc) => pc.where === 'tray' && !pc.remote).map((pc) => pc.mesh);
@@ -791,10 +800,13 @@ export function createTableView(host, api) {
   function cellAt(x, y) {
     setRay(x, y);
     const B = V.board;
-    plane.constant = -(V.surface * V.scale);
+    // 在对局空间的本地坐标里求交（AR 里对局空间被摆到了真实桌面上，平常只是缩放）
+    play.updateMatrixWorld();
+    invPlay.copy(play.matrixWorld).invert();
+    localRay.copy(ray.ray).applyMatrix4(invPlay);
+    plane.constant = -V.surface;
     const v = new THREE.Vector3();
-    if (!ray.ray.intersectPlane(plane, v)) return null;
-    v.divideScalar(V.scale);
+    if (!localRay.intersectPlane(plane, v)) return null;
     const st = api.state(), topo = st.topo;
     let best = null, bd = Infinity;
     if (B.dims === 3) {
@@ -830,6 +842,7 @@ export function createTableView(host, api) {
       return;
     }
     press = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, button: e.button, moved: false, touch: e.pointerType !== 'mouse', dragHeld: false };
+    if (AR.on && !AR.placed) { press.placing = true; return; }   // AR：先把棋盘放到桌面上
     if (e.button !== 0 && !press.touch) return;
     const pc = pieceAt(e.clientX, e.clientY);
     if (press.touch) {
@@ -847,7 +860,10 @@ export function createTableView(host, api) {
     if (pointers.size === 2) {
       const p = Array.from(pointers.values());
       const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
-      if (pinch > 0 && d > 0) zoomBy(pinch / d);
+      if (pinch > 0 && d > 0) {
+        if (AR.on) AR.size = THREE.MathUtils.clamp(AR.size * d / pinch, 0.35, 3);   // AR：双指缩放整个棋盘
+        else zoomBy(pinch / d);
+      }
       pinch = d;
       return;
     }
@@ -858,7 +874,9 @@ export function createTableView(host, api) {
       if (press.dragHeld) {
         if (press.moved) aim(e.clientX, e.clientY, press.touch ? 56 : 0);
       } else if (press.moved) {
-        if (press.button === 2 || e.shiftKey) {
+        if (AR.on) {
+          if (AR.placed) AR.yaw += dx * 0.009;      // AR：拖空白处转动棋盘
+        } else if (press.button === 2 || e.shiftKey) {
           const s = rig.dist * 0.0012;
           const cx = Math.cos(rig.az), sx = Math.sin(rig.az);
           rig.goal.target.x = THREE.MathUtils.clamp(rig.goal.target.x - (dx * cx + dy * sx) * s, -30, 30);
@@ -885,6 +903,7 @@ export function createTableView(host, api) {
     const p = press;
     press = null;
     if (!p || e.type === 'pointercancel') return;
+    if (p.placing) { if (!p.moved) placeAR(); return; }
     if (p.moved) {
       // 鼠标按住拖到棋盘上松开：能放就直接落子
       if (p.dragHeld && !p.touch && V.heldOk) api.place();
@@ -917,6 +936,7 @@ export function createTableView(host, api) {
       if (now - (V.lastWheel || 0) > 110) { turn('rotate', e.deltaY > 0 ? 1 : -1); V.lastWheel = now; }
       return;
     }
+    if (AR.on) { AR.size = THREE.MathUtils.clamp(AR.size * Math.exp(-e.deltaY * 0.0012), 0.35, 3); return; }
     zoomBy(Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.0012)));
   }, { passive: false });
 
@@ -958,9 +978,214 @@ export function createTableView(host, api) {
     }
   }
 
+  /* ================= AR（WebXR：安卓 Chrome + ARCore） ================= */
+  // 把棋盘和棋子放到摄像头画面里的真实桌面上：虚拟房间和桌子都不画，只画对局空间。
+  // ?arsim=1：没有 AR 设备时用普通画面模拟（灰色背景、一块"桌面"，屏幕中心对准的点当作检测到的平面），便于调试。
+  const arSim = new URLSearchParams(location.search).has('arsim');
+  const AR = {
+    on: false, session: null, hitSource: null, placed: false, found: false, size: 1, yaw: 0, saved: null,
+    root: new THREE.Group(), pivot: new THREE.Group(), extra: new THREE.Group(), simFloor: null
+  };
+  AR.root.add(AR.pivot);
+  AR.pivot.position.y = -TABLE_Y;      // 虚拟桌面的高度对齐到真实平面
+  const reticle = new THREE.Group();
+  {
+    const m = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92, depthTest: false });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.062, 48).rotateX(-Math.PI / 2), m);
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(0.008, 16).rotateX(-Math.PI / 2), m);
+    ring.renderOrder = dot.renderOrder = 10;
+    reticle.add(ring, dot);
+    reticle.visible = false;
+  }
+  const arHemi = new THREE.HemisphereLight(0xffffff, 0x8a8070, 1.1);
+  const arSun = new THREE.DirectionalLight(0xffffff, 2.2);
+  arSun.castShadow = true;
+  arSun.shadow.mapSize.set(1024, 1024);
+  arSun.shadow.bias = -0.0004;
+  arSun.shadow.normalBias = 0.01;
+  AR.extra.add(arHemi, arSun, arSun.target, reticle);
+  // 只显示影子的透明地面：棋盘和棋子在真实桌面上投下影子
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(160, 160).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: 0.3, depthWrite: false }));
+  catcher.position.y = TABLE_Y + 0.01;
+  catcher.receiveShadow = true;
+  AR.pivot.add(catcher);
+  const arRay = new THREE.Raycaster();
+  const arPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const arV = new THREE.Vector3(), arC = new THREE.Vector3(), arM = new THREE.Matrix4();
+
+  // 世界单位 → 米
+  function arUnit() { return AR_BOARD_M * AR.size / (Math.max(V.board.width, V.board.depth) * V.scale); }
+  function arCam() {
+    if (!AR.session) return camera;
+    const xc = renderer.xr.getCamera();
+    return xc.cameras && xc.cameras.length ? xc.cameras[0] : xc;
+  }
+  function arNotify() { if (api.onAR) api.onAR(); }
+
+  // 拿着棋子的人从哪个方向看棋盘（转动、镜像以此为准）。AR 里人会绕着桌子走：用手机的实际位置，取整到格子的对称方向
+  function viewAz() {
+    if (AR.on && AR.placed) {
+      play.updateMatrixWorld();
+      const v = play.worldToLocal(arC.setFromMatrixPosition(arCam().matrixWorld));
+      const snap = V.board.kind === 'square' || V.board.kind === 'cube' ? Math.PI / 2 : Math.PI / 6;
+      return Math.round(Math.atan2(v.x, v.z) / snap) * snap;
+    }
+    return seatAz(api.viewSeat());
+  }
+
+  function arSupported() {
+    if (arSim) return Promise.resolve(true);
+    if (!navigator.xr || !navigator.xr.isSessionSupported || !window.isSecureContext) return Promise.resolve(false);
+    return navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+  }
+
+  // 必须在点击事件里同步调用（浏览器要求用户手势）；返回 Promise<是否进入>
+  async function enterAR(overlay) {
+    if (AR.on || !V.board) return false;
+    if (arSim) { beginAR(null); return true; }
+    if (!navigator.xr) return false;
+    let session;
+    try {
+      session = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: overlay ? { root: overlay } : undefined
+      });
+    } catch (e) { return false; }
+    try {
+      renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType('local');
+      await renderer.xr.setSession(session);
+      const viewer = await session.requestReferenceSpace('viewer');
+      AR.hitSource = await session.requestHitTestSource({ space: viewer });
+    } catch (e) {
+      try { await session.end(); } catch (err) { /* 已经结束 */ }
+      renderer.xr.enabled = false;
+      return false;
+    }
+    session.addEventListener('end', endAR);
+    beginAR(session);
+    return true;
+  }
+
+  function beginAR(session) {
+    AR.on = true; AR.session = session; AR.placed = false; AR.found = false; AR.size = 1; AR.yaw = 0;
+    AR.saved = {
+      bg: scene.background, fog: scene.fog, near: camera.near, far: camera.far, exposure: renderer.toneMappingExposure,
+      envI: scene.environmentIntensity, clearAlpha: renderer.getClearAlpha(), shadows: renderer.shadowMap.enabled
+    };
+    if (env) env.group.visible = false;
+    scene.fog = null;
+    scene.background = session ? null : new THREE.Color(0x5b6066);
+    renderer.setClearAlpha(0);
+    renderer.toneMappingExposure = 1;
+    scene.environmentIntensity = 0.55;
+    renderer.shadowMap.enabled = true;
+    camera.near = 0.01; camera.far = 40; camera.updateProjectionMatrix();
+    AR.pivot.add(play);
+    AR.root.visible = false;
+    scene.add(AR.root, AR.extra);
+    V.hover = null;
+    pointers.clear(); press = null; pinch = 0;
+    if (!session) {
+      // 模拟：手机举在桌面斜上方
+      if (!AR.simFloor) {
+        AR.simFloor = new THREE.Mesh(new THREE.CircleGeometry(1.4, 64).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x9a8268, roughness: 0.85 }));
+        AR.simFloor.receiveShadow = true;
+        AR.simFloor.position.y = -0.002;
+      }
+      AR.extra.add(AR.simFloor);
+      camera.position.set(0, 0.7, 0.66);
+      camera.lookAt(0, 0, -0.08);
+    } else {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      renderer.setAnimationLoop(frameLoop);
+    }
+    arNotify();
+  }
+
+  function endAR() {
+    if (!AR.on) return;
+    const s = AR.saved;
+    AR.on = false;
+    if (AR.hitSource) { try { AR.hitSource.cancel(); } catch (e) { /* 忽略 */ } AR.hitSource = null; }
+    if (AR.session) { renderer.setAnimationLoop(null); renderer.xr.enabled = false; }
+    AR.session = null;
+    scene.remove(AR.root, AR.extra);
+    scene.add(play);
+    if (env) env.group.visible = true;
+    scene.background = s.bg; scene.fog = s.fog;
+    renderer.setClearAlpha(s.clearAlpha);
+    renderer.toneMappingExposure = s.exposure;
+    scene.environmentIntensity = s.envI;
+    renderer.shadowMap.enabled = s.shadows;
+    camera.near = s.near; camera.far = s.far; camera.updateProjectionMatrix();
+    pointers.clear(); press = null; pinch = 0;
+    V.lastAspect = 0;
+    if (V.visible) { resize(); lockCamera(true); start(); }
+    arNotify();
+  }
+
+  function placeAR() {
+    if (!AR.on || !AR.root.visible) return;
+    AR.placed = true;
+    reticle.visible = false;
+    arNotify();
+  }
+
+  // 每帧：找桌面、让棋盘跟着准星（还没放下时）、灯光和影子跟着棋盘
+  function updateAR(xrFrame, dt) {
+    let hit = false;
+    if (AR.session) {
+      if (xrFrame && AR.hitSource) {
+        const res = xrFrame.getHitTestResults(AR.hitSource);
+        const pose = res.length ? res[0].getPose(renderer.xr.getReferenceSpace()) : null;
+        if (pose) {
+          arM.fromArray(pose.transform.matrix);
+          hit = arM.elements[5] > 0.8;           // 只要水平的面（法线朝上）
+          if (hit) arV.setFromMatrixPosition(arM);
+        }
+      }
+    } else {
+      arRay.setFromCamera(new THREE.Vector2(0, 0), camera);
+      hit = !!arRay.ray.intersectPlane(arPlane, arV) && Math.hypot(arV.x, arV.z) < 1.3;
+    }
+    if (!AR.placed) {
+      reticle.visible = hit;
+      if (hit) {
+        reticle.position.copy(arV);
+        const first = !AR.root.visible;
+        if (first) AR.root.position.copy(arV);
+        else AR.root.position.lerp(arV, 1 - Math.exp(-dt * 12));
+        // 自己的座位朝向手机
+        const cp = arC.setFromMatrixPosition(arCam().matrixWorld);
+        const want = Math.atan2(cp.x - AR.root.position.x, cp.z - AR.root.position.z) - seatAz(api.viewSeat());
+        const w = nearestAngle(AR.yaw, want);
+        AR.yaw = first ? w : AR.yaw + (w - AR.yaw) * (1 - Math.exp(-dt * 6));
+        AR.root.visible = true;
+      }
+      if (hit !== AR.found) { AR.found = hit; arNotify(); }
+    }
+    AR.root.rotation.y = AR.yaw;
+    const u = arUnit();
+    AR.root.scale.setScalar(u);
+    const r = (env ? env.tableReach : 34) * u;        // 对局空间的半径（米）
+    const o = AR.root.position;
+    arSun.position.set(o.x + r * 0.7, o.y + r * 2.4, o.z + r * 0.5);
+    arSun.target.position.copy(o);
+    const sc = arSun.shadow.camera;
+    if (Math.abs(sc.right - r * 1.2) > 1e-4) {
+      sc.left = -r * 1.2; sc.right = r * 1.2; sc.top = r * 1.2; sc.bottom = -r * 1.2;
+      sc.near = r * 0.2; sc.far = r * 6;
+      sc.updateProjectionMatrix();
+    }
+  }
+
   /* ================= 主循环 ================= */
 
   function resize() {
+    if (AR.session) return;     // AR 时画面大小由设备决定
     const w = host.clientWidth || window.innerWidth, h = host.clientHeight || window.innerHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
@@ -978,14 +1203,14 @@ export function createTableView(host, api) {
   const perf = { n: 0, sum: 0, slow: 0, warm: 0 };
   let lastT = performance.now(), clock = 0, raf = 0;
 
-  function frameLoop(now) {
+  function frameLoop(now, xrFrame) {
     raf = 0;
-    if (!V.visible) return;
+    if (!V.visible && !AR.session) return;
     const raw = (now - lastT) / 1000;
     const dt = Math.min(0.25, raw);
     lastT = now; clock += dt;
     perf.warm += dt;
-    if (!document.hidden && raw < 1.5 && perf.warm > 3) {
+    if (!AR.on && !document.hidden && raw < 1.5 && perf.warm > 3) {
       perf.n++; perf.sum += raw;
       if (perf.n >= 90) {
         perf.slow = perf.sum / perf.n > 1 / 24 ? perf.slow + 1 : 0;
@@ -994,7 +1219,8 @@ export function createTableView(host, api) {
       }
     }
     if (V.board) {
-      updateCamera(dt);
+      if (AR.on) updateAR(xrFrame, dt);
+      else updateCamera(dt);
       for (let i = V.anims.length - 1; i >= 0; i--) {
         const a = V.anims[i];
         a.t = Math.min(1, a.t + dt / a.dur);
@@ -1023,13 +1249,13 @@ export function createTableView(host, api) {
       anchorMat.opacity = 0.6 + 0.3 * Math.sin(clock * 3.2);
       hintMat.opacity = 0.4 + 0.3 * Math.sin(clock * 5);
     }
-    if (env) env.update(dt, clock, camera);
+    if (env && !AR.on) env.update(dt, clock, camera);
     renderer.render(scene, camera);
-    raf = requestAnimationFrame(frameLoop);
+    if (!AR.session) raf = requestAnimationFrame(frameLoop);
   }
 
   function start() {
-    if (raf || !V.visible) return;
+    if (raf || !V.visible || AR.session) return;
     lastT = performance.now();
     raf = requestAnimationFrame(frameLoop);
   }
@@ -1087,6 +1313,7 @@ export function createTableView(host, api) {
       start();
     },
     hide() {
+      if (AR.on) view.exitAR();
       V.visible = false;
       host.hidden = true;
     },
@@ -1114,8 +1341,18 @@ export function createTableView(host, api) {
     seatAngle(p) { return seatAz(p); },
     holding() { return !!V.held; },
     heldOk() { return !!V.heldOk; },
+    // AR
+    arSupported: arSupported,
+    enterAR: enterAR,
+    exitAR() {
+      if (!AR.on) return;
+      if (AR.session) AR.session.end().catch(() => endAR());
+      else endAR();
+    },
+    replaceAR() { if (AR.on) { AR.placed = false; AR.found = false; arNotify(); } },
+    arState() { return { on: AR.on, live: !!AR.session, placed: AR.placed, found: AR.found }; },
     // 调试和自动测试用
-    _debug: { V: V, rig: rig, camera: camera, play: play, api: api }
+    _debug: { V: V, rig: rig, camera: camera, play: play, api: api, AR: AR }
   };
   const fade = document.createElement('div');
   fade.className = 'table-fade';

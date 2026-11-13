@@ -2555,6 +2555,8 @@
   function openDialog(id) {
     var d = $(id);
     if (d.open) return;
+    // 对话框在 AR 画面里显示不出来：先回到普通画面
+    if (table && table.arState().on) table.exitAR();
     if (typeof d.showModal === 'function') d.showModal();
     else d.setAttribute('open', '');
   }
@@ -3052,8 +3054,10 @@
       drawBoard();
     },
     prefs: function () { return { env: prefs.tableEnv, hints: prefs.hints }; },
-    onEnvChange: function (id) { prefs.tableEnv = id; savePrefs(); renderTableTools(); }
+    onEnvChange: function (id) { prefs.tableEnv = id; savePrefs(); renderTableTools(); },
+    onAR: function () { renderTableTools(); }
   };
+  var arOK = false;   // 这台设备能不能用 AR（WebXR immersive-ar，安卓 Chrome + ARCore）
 
   // 镜头坐在谁的座位：轮到本机的真人时就是他；电脑回合时留在上一位真人那里；联机时是自己的座位
   function tableSeat() {
@@ -3073,6 +3077,7 @@
     if (table || tableFailed || !window.BlockTurfTable) return table;
     try { table = window.BlockTurfTable.create($('table-root'), tableApi); } catch (e) { table = null; }
     if (!table) tableFailed = true;
+    else table.arSupported().then(function (ok) { arOK = !!ok; renderTableTools(); });
     return table;
   }
 
@@ -3115,6 +3120,13 @@
     $('tu-top').setAttribute('aria-pressed', table.topView ? 'true' : 'false');
     $('tu-hints').setAttribute('aria-pressed', prefs.hints ? 'true' : 'false');
     $('tu-sound').setAttribute('aria-pressed', prefs.sound ? 'true' : 'false');
+    var ar = table.arState();
+    $('game').classList.toggle('ar-mode', ar.on);
+    $('game').classList.toggle('ar-live', ar.live);
+    $('tu-ar').hidden = !arOK;
+    $('tu-ar').classList.toggle('on', ar.on);
+    $('tu-ar-label').textContent = t(ar.on ? 'table.arExit' : 'table.ar');
+    $('tu-ar-move').hidden = !(ar.on && ar.placed);
     renderTableUi();
   }
 
@@ -3159,16 +3171,19 @@
     if (!tableActive()) return;
     var act = !isReplay() && canAct();
     var has = act && game.sel.piece >= 0;
-    $('th-hold').hidden = !has;
+    var ar = table.arState();
+    var arWait = ar.on && !ar.placed;   // AR：还没把棋盘放到桌面上
+    $('th-hold').hidden = !has || arWait;
     var cube = is3D();
     $('th-flip').title = t(isCube() ? 'ctl.tipForward' : cube ? 'ctl.flipOver' : 'table.mirror');
     $('th-flip').setAttribute('aria-label', $('th-flip').title);
     $('th-flip-label').textContent = t(isCube() ? 'table.tipShort' : 'table.flipShort');
     $('th-roll').hidden = !isCube();
     $('th-place').disabled = !(act && ghostMove());
-    $('th-stop').hidden = !act;
+    $('th-stop').hidden = !act || arWait;
     var touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    $('th-tip').textContent = !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
+    $('th-tip').textContent = arWait ? t(ar.found ? 'table.arPlace' : 'table.arFind') :
+      !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : ar.on ? 'table.arTip' : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
   }
 
   window.addEventListener('blockturf-table-ready', function () {
@@ -4380,6 +4395,12 @@
     $('tu-back').addEventListener('click', function () { $('menu-btn').click(); });
     $('tu-env').addEventListener('click', function () { if (tableActive()) table.nextEnvironment(); });
     $('tu-top').addEventListener('click', toggleTopView);
+    $('tu-ar').addEventListener('click', function () {
+      if (!tableActive()) return;
+      if (table.arState().on) { table.exitAR(); return; }
+      table.enterAR($('game')).then(function (ok) { if (!ok) toast(t('table.arFail'), 'warn'); });
+    });
+    $('tu-ar-move').addEventListener('click', function () { if (table) table.replaceAR(); });
     $('tu-hints').addEventListener('click', function () { $('opt-hints').checked = prefs.hints = !prefs.hints; savePrefs(); renderTableTools(); drawBoard(); });
     $('tu-sound').addEventListener('click', function () { $('sound-btn').click(); renderTableTools(); });
     $('tu-help').addEventListener('click', function () { $('help-btn').click(); });

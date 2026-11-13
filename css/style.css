@@ -1456,6 +1456,17 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
 #game[data-env="tearoom"].table-mode .toast { color: #2a2118; background: rgba(250, 246, 236, 0.84); border-color: rgba(60, 40, 20, 0.16); }
 #game.table-mode .toast.warn { border-color: #ff6a5c; }
 
+/* AR：棋盘放在摄像头画面里的真实桌面上 */
+.tu-ar svg { margin-right: 2px; }
+.tu-ar span { font-weight: 700; letter-spacing: .02em; }
+.tu-ar.on { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+#game.ar-mode #tu-env, #game.ar-mode #tu-top, #game.ar-mode #tu-view { display: none; }
+#game.ar-mode .tu-tip { color: #fff; background: rgba(10, 8, 6, 0.55); padding: 6px 12px; border-radius: 999px; }
+#game.ar-mode .tu-tip:empty { display: none; }
+/* 真正的 AR 会话里，页面是叠在摄像头画面上的浮层：背景要透明，画布本身不显示（只接收触摸） */
+#game.ar-live, #game.ar-live .table-root { background: transparent !important; }
+#game.ar-live .table-canvas { opacity: 0; }
+#game.ar-live .table-fade { display: none; }
 @media (max-width: 1240px) and (min-width: 721px) {
   #tu-env-name { display: none; }
   .tu-env { width: 38px; padding: 0; justify-content: center; }
@@ -1470,6 +1481,10 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
   .tu-chip svg { width: 17px; height: 17px; }
   #tu-env-name, .tu-back b, .tu-room { display: none; }
   .tu-tools { flex: 1; gap: 4px; flex-wrap: nowrap; }
+  .tu-ar { padding: 0 10px; font-size: 13px; }
+  .tu-ar svg { display: none; }
+  #tu-ar-move { padding: 0 10px; font-size: 13px; }
+  #game.ar-mode #tu-help { display: none; }
   #tu-pause, #tu-result { padding: 0 10px; font-size: 13px; }
   .tu-turn { position: static; transform: none; order: 3; height: 34px; padding: 0 14px 0 10px; font-size: 14px; max-width: calc(100vw - 20px); }
   /* 玩家：顶栏下面一排小标签 */
