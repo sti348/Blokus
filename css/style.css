@@ -1345,23 +1345,73 @@ dialog.tour[open] { animation: fade-in .25s ease-out; }
 .ad-shield[hidden] { display: none; }
 .ad-shield.playing { background: rgba(8, 12, 20, 0.55); }
 
-/* 首页左下角：进入三维牌桌 */
-.table-link {
-  position: fixed;
-  left: max(16px, env(safe-area-inset-left, 0px));
-  bottom: max(14px, env(safe-area-inset-bottom, 0px));
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 7px 14px 7px 11px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--raised) 88%, transparent);
-  border: 1px solid var(--line);
-  color: var(--ink);
-  font-size: 13px; font-weight: 500; text-decoration: none;
-  box-shadow: 0 6px 18px -10px rgba(20, 30, 60, .45);
-  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-  z-index: 2;
+/* ================= 三维牌桌（默认的对局画面） ================= */
+
+.table-root { position: fixed; inset: 0; z-index: 0; background: #0a0806; }
+.table-root[hidden] { display: none; }
+.table-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+.table-fade { position: absolute; inset: 0; background: #060504; opacity: 0; pointer-events: none; transition: opacity .38s ease; }
+.table-fade.on { opacity: 1; }
+
+#game.table-mode { position: relative; }
+#game.table-mode > .topbar, #game.table-mode > .game-layout { position: relative; z-index: 2; }
+#game.table-mode .game-layout { pointer-events: none; display: block; }
+#game.table-mode .game-layout > * { pointer-events: auto; }
+#game.table-mode .board-area { pointer-events: none; position: fixed; inset: 0; width: auto; height: auto; z-index: 3; }
+#game.table-mode #board, #game.table-mode .cam-ctl { display: none; }
+#game.table-mode .board-wrap { position: absolute; inset: 0; width: auto; height: auto; aspect-ratio: auto; background: none; box-shadow: none; border: 0; pointer-events: none; }
+#game.table-mode .toast { top: auto; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 92px); pointer-events: auto; }
+#game.table-mode .dock:not(.replaying) { display: none; }
+#game.table-mode .dock.replaying { position: fixed; right: 16px; top: 72px; bottom: 16px; width: 300px; z-index: 4; }
+
+/* 顶栏和玩家：半透明的玻璃面板 */
+#game.table-mode .topbar .btn, #game.table-mode .turn, #game.table-mode .pcard {
+  background: color-mix(in srgb, var(--raised) 80%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
-.table-link:hover { transform: translateY(-2px); border-color: var(--p-blue); box-shadow: 0 10px 22px -10px rgba(20, 30, 60, .55); }
-.table-link svg { width: 16px; height: 16px; fill: none; stroke: var(--p-blue); stroke-width: 1.8; stroke-linejoin: round; }
-#setup[hidden] .table-link { display: none; }
-@media (max-width: 960px) { .table-link { position: static; justify-self: start; margin-top: 4px; } }
+#game.table-mode .turn { flex: 0 1 auto; min-width: 170px; margin-inline: auto; }
+#game.table-mode .players { position: fixed; left: max(16px, env(safe-area-inset-left)); top: 72px; width: 214px; max-height: calc(100% - 200px); z-index: 2; }
+#game.table-mode .pcard { padding: 8px 11px; }
+#game.table-mode .pcard-pieces, #game.table-mode .pcard-note { display: none; }
+.env-btn { gap: 7px; }
+.env-btn svg, #view3d-btn svg, #top-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#view3d-btn[aria-pressed="true"], #top-btn[aria-pressed="true"] { border-color: var(--p-blue); color: var(--p-blue); }
+
+/* 拿着棋子时的操作条 */
+.table-hud {
+  position: fixed; z-index: 4; left: 0; right: 0; bottom: max(14px, env(safe-area-inset-bottom));
+  display: grid; justify-items: center; gap: 8px; pointer-events: none; padding: 0 12px;
+}
+.table-hud[hidden], .th-hold[hidden], .th-stop[hidden] { display: none !important; }
+.table-hud > * { pointer-events: auto; }
+.th-hold { display: flex; gap: 8px; animation: fade-up .22s ease-out; }
+.th-hold .btn {
+  height: 46px; min-width: 48px; padding: 0 14px; gap: 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--raised) 86%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.th-hold .btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.th-hold .btn.primary { background: var(--p-blue); color: #fff; border-color: transparent; padding: 0 20px; font-weight: 600; }
+.th-hold .btn.primary:disabled { opacity: .45; }
+.th-tip { margin: 0; min-height: 1.4em; font-size: 13px; color: #f4efe6; text-align: center; text-shadow: 0 1px 6px rgba(0, 0, 0, .7); pointer-events: none; }
+.th-stop { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--raised) 80%, transparent); }
+
+@media (max-width: 720px) {
+  #game.table-mode { min-height: 100%; }
+  #game.table-mode .topbar { gap: 6px; }
+  #game.table-mode .top-actions { gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  #game.table-mode .top-actions .btn { min-height: 34px; padding: 0 9px; font-size: 13px; }
+  #game.table-mode .top-actions .btn.icon { width: 34px; padding: 0; }
+  #game.table-mode #env-name, #game.table-mode #pause-btn { display: none; }
+  #game.table-mode .players { position: static; width: auto; display: flex; flex-wrap: wrap; gap: 5px; max-height: none; margin-top: 6px; }
+  #game.table-mode .pcard { grid-template-columns: auto auto; padding: 4px 9px 4px 6px; gap: 0 6px; border-radius: 999px; }
+  #game.table-mode .pcard-name small, #game.table-mode .pcard-state, #game.table-mode .pcard-bar { display: none; }
+  #game.table-mode .pcard-name { font-size: 12.5px; max-width: 7.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #game.table-mode .pcard-left b { font-size: 13px; }
+  .th-hold .btn { height: 44px; padding: 0 12px; }
+  .th-hold .btn span { display: none; }
+  .th-hold .btn.primary span { display: inline; }
+  .th-tip { font-size: 12px; }
+  .th-stop { position: static; height: 30px; font-size: 12px; }
+  #game.table-mode .dock.replaying { left: 10px; right: 10px; top: auto; width: auto; bottom: 10px; max-height: 45vh; }
+}

@@ -22,7 +22,6 @@
         <canvas id="demo-board" data-i18n-attr="aria-label:demo.aria" aria-label="AI self-play demo"></canvas>
       </div>
       <p class="play-count" id="play-count" role="status" hidden></p>
-      <a class="table-link" id="table-link" href="table.html"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.500v9L12 21l-8-4.500v-9z"/><path d="M4 7.500l8 4.500 8-4.500M12 12v9"/></svg><span data-i18n="setup.table3d">3D Table</span></a>
       <div class="hero-caption">
         <span class="demo-name" id="demo-label"></span>
         <p class="hero-note" id="mode-note"></p>
@@ -166,6 +165,8 @@
 
   <!-- ============ 对局 ============ -->
   <section id="game" class="screen game" hidden>
+    <!-- 三维牌桌（默认）：画布铺满整个画面，界面浮在上面 -->
+    <div class="table-root" id="table-root" hidden></div>
     <header class="topbar">
       <button type="button" class="btn ghost" id="menu-btn">‹ Menu</button>
       <div class="turn" id="turn" aria-live="polite">
@@ -175,6 +176,9 @@
       </div>
       <span class="room-chip" id="room-chip" hidden></span>
       <div class="top-actions">
+        <button type="button" class="btn icon" id="view3d-btn" aria-pressed="true" title="Flat board" aria-label="Flat board"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg></button>
+        <button type="button" class="btn env-btn" id="env-btn" hidden data-i18n-attr="title:table.env" title="Room"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg><span id="env-name"></span></button>
+        <button type="button" class="btn icon" id="top-btn" hidden aria-pressed="false" data-i18n-attr="title:table.top;aria-label:table.top" title="Top view (V)" aria-label="Top view"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M5 12h14M12 5v14"/></svg></button>
         <button type="button" class="btn" id="hint-btn" data-i18n="game.hint" data-i18n-attr="title:game.hintTitle" title="Hint (H)">Hint</button>
         <button type="button" class="btn" id="undo-btn" data-i18n="game.undo" data-i18n-attr="title:game.undoTitle" title="Undo (Ctrl+Z)">Undo</button>
         <button type="button" class="btn" id="pause-btn" hidden>Pause</button>
@@ -208,6 +212,20 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- 三维牌桌：拿着棋子时的操作条和提示 -->
+      <div class="table-hud" id="table-hud" hidden>
+        <div class="th-hold" id="th-hold" hidden>
+          <button type="button" class="btn" id="th-rot-ccw" data-i18n-attr="title:ctl.rotLeft;aria-label:ctl.rotLeftAria" title="Rotate left" aria-label="Rotate left"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5V9h4.5"/></svg></button>
+          <button type="button" class="btn" id="th-rot-cw" data-i18n-attr="title:ctl.rotRight;aria-label:ctl.rotRightAria" title="Rotate right" aria-label="Rotate right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M20 4.5V9h-4.5"/></svg></button>
+          <button type="button" class="btn" id="th-flip" title="Mirror" aria-label="Mirror"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="2 2.6"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/></svg><span id="th-flip-label"></span></button>
+          <button type="button" class="btn" id="th-roll" hidden data-i18n-attr="title:ctl.roll;aria-label:ctl.rollAria" title="Roll sideways (G)" aria-label="Roll sideways"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18.5 3v4h-4"/><rect x="8" y="11" width="8" height="8" rx="1"/></svg></button>
+          <button type="button" class="btn primary" id="th-place" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span data-i18n="ctl.place">Place</span></button>
+          <button type="button" class="btn" id="th-back" data-i18n-attr="title:table.putBack;aria-label:table.putBack" title="Put back" aria-label="Put back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+        <p class="th-tip" id="th-tip"></p>
+        <button type="button" class="btn ghost danger-text th-stop" id="th-stop" hidden data-i18n="resign.button">Stop — no more moves</button>
       </div>
 
       <aside class="dock" id="dock">
@@ -423,6 +441,8 @@
 <script src="js/record.js"></script>
 <script src="js/net.js"></script>
 <script src="js/platform.js"></script>
+<script src="js/table/geom.js"></script>
 <script src="js/app.js"></script>
+<script type="module" src="js/table/view.js"></script>
 </body>
 </html>

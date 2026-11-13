@@ -701,7 +701,10 @@
     sound: true,
     speed: 'normal',
     theme: 'light',
-    lang: ''
+    lang: '',
+    // 默认用三维牌桌；环境（房间）记住上次的选择
+    view3d: true,
+    tableEnv: 'study'
   };
 
   function loadPrefs() {
@@ -735,6 +738,8 @@
     if (Object.prototype.hasOwnProperty.call(SPEED_MS, saved.speed)) p.speed = saved.speed;
     if (saved.theme === 'dark') p.theme = 'dark';
     if (I18n.LANGS.some(function (l) { return l.code === saved.lang; })) p.lang = saved.lang;
+    if (typeof saved.view3d === 'boolean') p.view3d = saved.view3d;
+    if (typeof saved.tableEnv === 'string' && /^[a-z0-9-]{1,24}$/.test(saved.tableEnv)) p.tableEnv = saved.tableEnv;
     return p;
   }
 
@@ -1453,6 +1458,7 @@
     $('lobby').hidden = name !== 'lobby';
     $('game').hidden = name !== 'game';
     if (name !== 'game') {
+      if (table) table.hide();
       cancelAI();
       pauseReplay();
       if (tour.steps) {
@@ -1521,6 +1527,7 @@
     if (resetXray) game.view.xray = false;
     applyModeControls();
     game.view.resize();
+    syncTableMode(true);
   }
 
   function setXray(on) {
@@ -2069,6 +2076,7 @@
   // 方块 / 三角：平面内旋转；立体：绕竖轴转 90°
   function rotate(d) {
     if (game.sel.piece < 0 || !canAct()) return;
+    if (tableActive() && table.turn('rotate', d)) return;
     var set = game.state.set;
     if (set.dims === 3) {
       game.sel.orient = set.turn(game.sel.piece, game.sel.orient, 1, d);
@@ -2082,6 +2090,7 @@
   // 方块 / 三角：始终沿屏幕竖轴镜像（F·R^k = R^-k·F）；立体：向前翻
   function flip() {
     if (game.sel.piece < 0 || !canAct()) return;
+    if (tableActive() && table.turn(is3D() ? 'tip' : 'mirror', 1)) return;
     var set = game.state.set;
     if (set.dims === 3) {
       game.sel.orient = set.turn(game.sel.piece, game.sel.orient, View3D.screenAxes(game.view).tip, 1);
@@ -2096,6 +2105,7 @@
   // 立体：向侧面翻
   function roll() {
     if (game.sel.piece < 0 || !canAct() || !isCube()) return;
+    if (tableActive() && table.turn('roll', 1)) return;
     game.sel.orient = game.state.set.turn(game.sel.piece, game.sel.orient, View3D.screenAxes(game.view).roll, 1);
     afterTurnPiece();
   }
@@ -2208,7 +2218,9 @@
     rafId = requestAnimationFrame(function (now) {
       rafId = 0;
       var more = false;
-      if (game.view && !$('game').hidden && game.state) {
+      // 三维牌桌有自己的绘制循环：这里只把最新的局面交给它
+      if (tableActive() && !$('game').hidden) table.update();
+      if (game.view && !$('game').hidden && game.state && !tableActive()) {
         if (game.anim && now - game.anim.t0 >= animMs(game.state)) game.anim = null;
         var ct = game.view.camTarget;
         if (ct) {
@@ -2243,7 +2255,8 @@
   }
 
   function drawBoard() {
-    if (game.hint && !REDUCED_MOTION) animate();
+    if (tableActive()) table.update();
+    else if (game.hint && !REDUCED_MOTION) animate();
     else if (game.view) game.view.draw();
     updatePlaceButton();
     syncPreview();
@@ -2511,10 +2524,12 @@
     }
     ['rot-ccw', 'rot-cw', 'flip-btn', 'roll-btn'].forEach(function (id) { $(id).disabled = !has; });
     updatePlaceButton();
+    renderTableHud();
   }
 
   function updatePlaceButton() {
     $('place-btn').disabled = !(canAct() && ghostMove());
+    $('th-place').disabled = $('place-btn').disabled;
   }
 
   /* ---------- 提示条 ---------- */
@@ -2981,6 +2996,146 @@
     if (top < list.scrollTop) list.scrollTop = top;
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
   }
+
+  /* ================= 三维牌桌 ================= */
+
+  // 三维视图在 js/table/view.js（ES 模块），比这个文件晚加载；准备好后会发出 blockturf-table-ready
+  var table = null, tableFailed = false;
+
+  var tableApi = {
+    state: function () { return game.state; },
+    canAct: function () { return !!game.state && canAct(); },
+    viewSeat: tableSeat,
+    selection: function () {
+      if (!game.state || !canAct() || game.sel.piece < 0) return null;
+      return { piece: game.sel.piece, orient: currentOrient() };
+    },
+    move: function () { return game.state ? ghostMove() : null; },
+    anchors: function () { return game.anchorDots || (game.anchors && game.anchors.list) || null; },
+    hint: function () { return game.hint; },
+    remote: function () { return remotePreviewSafe(); },
+    select: function (pi) { selectPiece(pi); },
+    setOrient: function (o) {
+      var set = game.state.set;
+      if (set.dims === 3) game.sel.orient = o;
+      else {
+        var oo = set.pieces[game.sel.piece].orients[o];
+        game.sel.rot = oo.rot;
+        game.sel.flip = oo.flip;
+      }
+      afterTurnPiece();
+    },
+    setGhost: function (cell) {
+      if (!canAct() || game.sel.piece < 0) return;
+      if (game.ghost && game.ghost.x === cell.x && game.ghost.y === cell.y && game.ghost.z === cell.z) return;
+      game.ghost = cell;
+      game.hintLockCell = null;
+      game.ghostByTap = true;
+      clampGhost();
+      drawBoard();
+    },
+    place: function () {
+      var ok = tryPlace();
+      if (!ok && table) table.shake();
+      return ok;
+    },
+    drop: function () {
+      if (game.sel.piece < 0) return;
+      game.sel.piece = -1;
+      game.hint = null;
+      renderDock();
+      drawBoard();
+    },
+    prefs: function () { return { env: prefs.tableEnv, hints: prefs.hints }; },
+    onEnvChange: function (id) { prefs.tableEnv = id; savePrefs(); renderTableTools(); }
+  };
+
+  // 镜头坐在谁的座位：轮到本机的真人时就是他；电脑回合时留在上一位真人那里；联机时是自己的座位
+  function tableSeat() {
+    var st = game.state;
+    if (!st) return 0;
+    if (canAct()) { game.tableSeat = st.current; return st.current; }
+    if (isOnlineGame()) {
+      var mine = st.players.findIndex(function (p) { return p.owner && p.owner === myId(); });
+      if (mine >= 0) return mine;
+    }
+    if (game.tableSeat != null && game.tableSeat < st.players.length && st.players[game.tableSeat].type === 'human') return game.tableSeat;
+    var first = st.players.findIndex(function (p) { return p.type === 'human'; });
+    return first >= 0 ? first : 0;
+  }
+
+  function ensureTable() {
+    if (table || tableFailed || !window.BlockTurfTable) return table;
+    try { table = window.BlockTurfTable.create($('table-root'), tableApi); } catch (e) { table = null; }
+    if (!table) tableFailed = true;
+    return table;
+  }
+
+  function tableActive() { return !!table && $('game').classList.contains('table-mode') && !!game.state; }
+
+  // 进入对局或切换 2D / 3D 时：决定用三维牌桌还是平面棋盘
+  function syncTableMode(rebuild) {
+    var want = prefs.view3d && !!game.state && !!ensureTable();
+    var root = $('game');
+    var was = root.classList.contains('table-mode');
+    root.classList.toggle('table-mode', want);
+    $('table-root').hidden = !want;
+    if (want) {
+      if (rebuild || !was) { game.tableSeat = null; table.setGame(); }
+      table.show();
+      table.update();
+    } else if (table) {
+      table.hide();
+      if (game.view) { game.view.resize(); game.view.draw(); }
+    }
+    renderTableTools();
+  }
+
+  function toggleTopView() {
+    if (!tableActive()) return;
+    var on = table.setTopView(!table.topView);
+    $('top-btn').setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  function renderTableTools() {
+    var on = tableActive();
+    var b = $('view3d-btn');
+    b.setAttribute('aria-pressed', prefs.view3d ? 'true' : 'false');
+    b.title = t(on ? 'table.to2d' : 'table.to3d');
+    b.setAttribute('aria-label', b.title);
+    b.disabled = !prefs.view3d && tableFailed;
+    $('env-btn').hidden = !on;
+    $('top-btn').hidden = !on;
+    if (on) {
+      var env = table.environments.find(function (e) { return e.id === table.environment; });
+      $('env-name').textContent = env ? t('env.' + env.id) : '';
+    }
+    renderTableHud();
+  }
+
+  function renderTableHud() {
+    var on = tableActive();
+    var hud = $('table-hud');
+    hud.hidden = !on;
+    if (!on) return;
+    var act = !isReplay() && canAct();
+    var has = act && game.sel.piece >= 0;
+    $('th-hold').hidden = !has;
+    var cube = is3D();
+    $('th-flip').title = t(isCube() ? 'ctl.tipForward' : cube ? 'ctl.flipOver' : 'table.mirror');
+    $('th-flip').setAttribute('aria-label', $('th-flip').title);
+    $('th-flip-label').textContent = t(isCube() ? 'table.tipShort' : 'table.flipShort');
+    $('th-roll').hidden = !isCube();
+    $('th-place').disabled = !(act && ghostMove());
+    $('th-stop').hidden = !act;
+    var touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    $('th-tip').textContent = !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
+  }
+
+  window.addEventListener('blockturf-table-ready', function () {
+    if (!$('game').hidden && game.state && prefs.view3d) { syncTableMode(true); renderGame(); }
+    else renderTableTools();
+  });
 
   /* ================= 全站游玩次数 ================= */
 
@@ -3908,7 +4063,11 @@
       if (k === 'r') { rotate(e.shiftKey ? -1 : 1); return; }
       if (k === 'f') { flip(); return; }
       if (k === 'h') { giveHint(); return; }
-      if (cube) {
+      if (tableActive()) {
+        if (k === 'g') { roll(); return; }
+        if (k === 'v') { toggleTopView(); return; }
+        if (k === 'e') { rotate(-1); return; }
+      } else if (cube) {
         if (k === 'x') { setXray(!(game.view && game.view.xray)); return; }
         if (k === '[') { setSlice(+$('layer-range').value - 1); return; }
         if (k === ']') { setSlice(+$('layer-range').value + 1); return; }
@@ -4170,6 +4329,22 @@
     $('cam-down').addEventListener('click', function () { turnCamera(0, -1); });
     $('place-btn').addEventListener('click', tryPlace);
     $('resign-btn').addEventListener('click', resign);
+    // 三维牌桌
+    $('view3d-btn').addEventListener('click', function () {
+      prefs.view3d = !prefs.view3d;
+      savePrefs();
+      syncTableMode(true);
+      renderGame();
+    });
+    $('env-btn').addEventListener('click', function () { if (tableActive()) table.nextEnvironment(); });
+    $('top-btn').addEventListener('click', toggleTopView);
+    $('th-rot-ccw').addEventListener('click', function () { rotate(-1); });
+    $('th-rot-cw').addEventListener('click', function () { rotate(1); });
+    $('th-flip').addEventListener('click', flip);
+    $('th-roll').addEventListener('click', roll);
+    $('th-place').addEventListener('click', function () { if (!tryPlace() && table) table.shake(); });
+    $('th-back').addEventListener('click', function () { tableApi.drop(); });
+    $('th-stop').addEventListener('click', resign);
 
     $('end-again').addEventListener('click', function () {
       if (isOnlineGame()) {
@@ -4278,8 +4453,6 @@
 
   /* ================= 启动 ================= */
 
-  // 三维牌桌是网站上单独的一页；嵌在游戏平台里或没有这一页的环境（Claude 页面、本地文件）不显示入口
-  if (Platform.crazyGames || !/^https?:$/.test(location.protocol) || (window.claude && window.claude.use)) $('table-link').hidden = true;
   if (!LLM_ON) {
     // CrazyGames 上不提供大模型电脑：去掉它的入口和规则说明
     $('lobby-llm-open').hidden = true;

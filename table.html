@@ -2,75 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>BlockTurf · 3D Table</title>
-<meta name="description" content="BlockTurf at a real table: pick up solid pieces, turn and flip them in your hand, and set them down on the board in a 3D room.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="css/table.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockTurf</title>
+<!-- 三维牌桌现在是游戏的默认画面：旧的链接跳到首页 -->
+<meta http-equiv="refresh" content="0; url=index.html">
+<link rel="canonical" href="index.html">
 </head>
-<body>
-<canvas id="view"></canvas>
-<div id="fade" class="on"></div>
-<div id="nogl" hidden></div>
-
-<header class="hud-top">
-  <a class="chip back" href="index.html" data-title="menu"><svg viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6"/></svg><b>BlockTurf</b></a>
-  <div class="turn" id="turn"><i></i><span id="turn-text"></span></div>
-  <div class="tools">
-    <button type="button" class="chip env" id="env-btn" data-title="env"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></svg><span id="env-name"></span></button>
-    <button type="button" class="chip icon" id="view-btn" data-title="top" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M5 12h14M12 5v14"/></svg></button>
-    <button type="button" class="chip icon" id="hints-btn" data-title="hints" aria-pressed="true"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.2"/><circle cx="17" cy="17" r="2.2"/><path d="M9 9l6 6"/></svg></button>
-    <button type="button" class="chip icon" id="sound-btn" data-title="sound" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></button>
-    <button type="button" class="chip icon" id="suggest-btn" data-title="suggest"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.600 1-2.100A6 6 0 0 0 12 3z"/></svg></button>
-    <button type="button" class="chip icon" id="undo-btn" data-title="undo"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.700"/><path d="M4 4.500V9h4.500"/></svg></button>
-    <button type="button" class="chip" id="new-btn" data-t="newGame"></button>
-  </div>
-</header>
-
-<ul id="players" class="players"></ul>
-
-<div class="hud-bottom">
-  <div id="toast" class="toast" role="status" hidden></div>
-  <div id="hold-bar" class="hold-bar" hidden>
-    <button type="button" id="rot-btn"></button>
-    <button type="button" id="flip-btn"></button>
-    <button type="button" id="place-btn" class="primary"></button>
-    <button type="button" id="back-btn"></button>
-  </div>
-  <p id="tip" class="tip"></p>
-  <button type="button" id="stop-btn" class="stop" data-t="stop" hidden></button>
-</div>
-
-<dialog id="setup-dialog" class="panel">
-  <form id="setup-form">
-    <h2 data-t="setupTitle"></h2>
-    <label class="row"><span data-t="board"></span>
-      <select id="setup-mode"><option value="classic" data-t="classic"></option><option value="duo" data-t="duo"></option></select>
-    </label>
-    <h3 data-t="seats"></h3>
-    <div id="setup-seats" class="seats"></div>
-    <div class="actions">
-      <button type="button" id="setup-cancel" data-t="cancel"></button>
-      <button type="submit" class="primary" data-t="start"></button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="end-dialog" class="panel">
-  <h2 id="end-title"></h2>
-  <ol id="end-rows" class="rows"></ol>
-  <div class="actions">
-    <button type="button" id="end-view" data-t="view"></button>
-    <button type="button" id="end-again" class="primary" data-t="again"></button>
-  </div>
-</dialog>
-
-<script src="js/pieces.js"></script>
-<script src="js/engine.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/table/logic.js"></script>
-<script type="module" src="js/table/main.js"></script>
-</body>
+<body><a href="index.html">BlockTurf</a></body>
 </html>
