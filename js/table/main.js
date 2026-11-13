@@ -30,9 +30,9 @@ const TEXT = {
     'c.blue': 'Blue', 'c.yellow': 'Yellow', 'c.red': 'Red', 'c.green': 'Green', 'c.violet': 'Purple', 'c.orange': 'Orange',
     'l.easy': 'Easy', 'l.normal': 'Normal', 'l.hard': 'Hard', 'l.expert': 'Master', human: 'Player',
     left: '{n} left', done: 'done', blocked: '{n} has no moves left',
-    tipPick: 'Click one of your pieces to pick it up · drag to look around · scroll to zoom',
-    tipPickTouch: 'Tap or drag one of your pieces · drag the table to look around · pinch to zoom',
-    tipHold: 'Click the board to place · R or right-click rotate · F flip · Esc put back',
+    tipPick: 'Click one of your pieces to pick it up · drag to peek around (it springs back) · scroll to zoom',
+    tipPickTouch: 'Tap or drag one of your pieces · drag the table to peek · pinch to zoom',
+    tipHold: 'Click or drag onto the board to place · R or right-click rotate · F flip · Esc put back',
     tipHoldTouch: 'Drag the piece onto the board, then press Place',
     rotate: 'Rotate', flip: 'Flip', place: 'Place', putBack: 'Put back',
     env: 'Room', top: 'Top view', seat: 'Seat view', hints: 'Corner hints', sound: 'Sound', undo: 'Undo', suggest: 'Hint', newGame: 'New game', menu: 'Flat board',
@@ -48,9 +48,9 @@ const TEXT = {
     'c.blue': '蓝', 'c.yellow': '黄', 'c.red': '红', 'c.green': '绿', 'c.violet': '紫', 'c.orange': '橙',
     'l.easy': '简单', 'l.normal': '普通', 'l.hard': '困难', 'l.expert': '大师', human: '玩家',
     left: '剩 {n} 块', done: '已停手', blocked: '{n}无处可放了',
-    tipPick: '点自己的棋子把它拿起来 · 拖动环顾四周 · 滚轮缩放',
-    tipPickTouch: '点或拖自己的棋子 · 拖动桌面环顾四周 · 双指缩放',
-    tipHold: '点棋盘落子 · R 或右键旋转 · F 翻面 · Esc 放回去',
+    tipPick: '点自己的棋子把它拿起来 · 拖动可临时环顾（松手回到摆棋视角）· 滚轮缩放',
+    tipPickTouch: '点或拖自己的棋子 · 拖动桌面临时环顾 · 双指缩放',
+    tipHold: '点棋盘或拖到棋盘上落子 · R 或右键旋转 · F 翻面 · Esc 放回去',
     tipHoldTouch: '把棋子拖到棋盘上，再按「落子」',
     rotate: '旋转', flip: '翻面', place: '落子', putBack: '放回',
     env: '环境', top: '俯视', seat: '坐姿', hints: '角点提示', sound: '声音', undo: '悔棋', suggest: '提示', newGame: '新对局', menu: '平面棋盘',
@@ -104,13 +104,15 @@ try {
   throw e;
 }
 // 画质档位：0 高（默认）、1 中、2 低。帧率太低时自动降档；网址加 ?q=low / ?q=mid 可以直接指定
+// 画面清晰度优先：先降阴影，最后才降分辨率；高清屏上分辨率不低于 1.5 倍
 const QUALITY = [
   { dpr: 2, shadows: true, shadowMap: 2048 },
-  { dpr: 1, shadows: true, shadowMap: 1024 },
-  { dpr: 0.75, shadows: false, shadowMap: 512 }
+  { dpr: 2, shadows: true, shadowMap: 1024 },
+  { dpr: 1.5, shadows: false, shadowMap: 512 },
+  { dpr: 1, shadows: false, shadowMap: 512 }
 ];
 const qParam = new URLSearchParams(location.search).get('q');
-let quality = qParam === 'low' ? 2 : qParam === 'mid' ? 1 : 0;
+let quality = qParam === 'low' ? 3 : qParam === 'mid' ? 2 : 0;
 function applyQuality() {
   const q = QUALITY[quality];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.dpr));
@@ -147,7 +149,9 @@ off.add(boardGroup, pieceGroup, markGroup);
 const rig = {
   az: 0, pol: 0.86, dist: 64, target: new THREE.Vector3(0, 0, 5),
   goal: { az: 0, pol: 0.86, dist: 64, target: new THREE.Vector3(0, 0, 5) },
-  top: false, saved: null, spin: 0
+  top: false, saved: null, spin: 0,
+  lock: null,   // 轮到自己时固定的视角 { az, pol, dist, target }；拖动只是临时看看，松手就回来
+  zoom: 1       // 双指 / 滚轮缩放（相对固定视角的距离）
 };
 
 function seatAzimuth(playerIndex) {
@@ -163,11 +167,71 @@ function nearestAngle(from, to) {
   return from + d;
 }
 
+const fitCam = new THREE.PerspectiveCamera();
+const fitV = new THREE.Vector3();
+
+// 轮到某位真人时的固定视角：从他的座位看过去，棋盘和面前的棋子都完整地在画面里，界面也不挡住
+function playView(p) {
+  const st = G.st, N = st.topo.cols;
+  const az = seatAzimuth(p);
+  const portrait = camera.aspect < 1;
+  const pol = rig.top ? 0.1 : portrait ? 0.62 : 0.72;
+  const pts = [];
+  [[-1.5, -1.5], [N + 0.5, -1.5], [-1.5, N + 0.5], [N + 0.5, N + 0.5]].forEach((c) => pts.push(new THREE.Vector3(c[0], 0, c[1])));
+  G.P[p].forEach((pc) => {
+    if (pc.where !== 'tray' && pc !== G.held) return;
+    Logic.pose(pc.def, pc.home.k, false).offsets.forEach((o) => pts.push(new THREE.Vector3(pc.home.x + o[0], TRAY_Y, pc.home.z + o[1])));
+  });
+  const world = pts.map((v) => off.localToWorld(v.clone()));
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  world.forEach((v) => { minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x); minZ = Math.min(minZ, v.z); maxZ = Math.max(maxZ, v.z); });
+  const target = new THREE.Vector3((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
+  // 画面上方留给顶栏，下方留给操作按钮和提示
+  const top = portrait ? 0.7 : 0.8, bottom = portrait ? -0.74 : -0.8, side = portrait ? 0.97 : 0.9;
+  fitCam.fov = camera.fov; fitCam.aspect = camera.aspect; fitCam.near = 1; fitCam.far = 900; fitCam.updateProjectionMatrix();
+  let dist = 60;
+  for (let i = 0; i < 10; i++) {
+    const sp = Math.sin(pol);
+    fitCam.position.set(target.x + dist * sp * Math.sin(az), target.y + dist * Math.cos(pol), target.z + dist * sp * Math.cos(az));
+    fitCam.lookAt(target);
+    fitCam.updateMatrixWorld();
+    let m = 0;
+    world.forEach((v) => {
+      fitV.copy(v).project(fitCam);
+      m = Math.max(m, Math.abs(fitV.x) / side, fitV.y > 0 ? fitV.y / top : -fitV.y / -bottom);
+    });
+    // 偏上 / 偏下时把视线落点挪一挪，让内容在可用区域里居中
+    dist *= Math.pow(m, 0.9);
+  }
+  // 竖屏：画面整体略往上挪，给底部的按钮留空间
+  return { az: az, pol: pol, dist: THREE.MathUtils.clamp(dist, 18, 110), target: target };
+}
+
+// 缩放：固定视角时记成相对比例（一直有效），否则直接改距离
+function zoomBy(f) {
+  if (rig.lock) rig.zoom = THREE.MathUtils.clamp(rig.zoom * f, 0.5, 1.4);
+  else rig.goal.dist *= f;
+}
+
+function lockCamera(p) {
+  rig.lock = p == null ? null : playView(p);
+  if (rig.lock) {
+    rig.lock.az = nearestAngle(rig.goal.az, rig.lock.az);
+    rig.spin = 0;
+  }
+}
+
 function updateCamera(dt) {
   const g = rig.goal;
+  // 固定视角：没在拖动时，镜头回到摆棋的位置
+  if (rig.lock && !press && pointers.size === 0) {
+    const L = rig.lock;
+    L.az = nearestAngle(g.az, L.az);
+    g.az = L.az; g.pol = L.pol; g.dist = L.dist * rig.zoom; g.target.copy(L.target);
+  }
   if (rig.spin) g.az += rig.spin * dt;
   g.pol = THREE.MathUtils.clamp(g.pol, 0.03, 1.36);
-  g.dist = THREE.MathUtils.clamp(g.dist, 16, 100);
+  g.dist = THREE.MathUtils.clamp(g.dist, 14, 120);
   const a = 1 - Math.exp(-dt * 7);
   rig.az += (g.az - rig.az) * a;
   rig.pol += (g.pol - rig.pol) * a;
@@ -190,7 +254,9 @@ function seatTarget(az) {
 function setTopView(on) {
   if (on === rig.top) return;
   rig.top = on;
-  if (on) {
+  if (rig.lock) {
+    lockCamera(G.st.current);
+  } else if (on) {
     rig.saved = { pol: rig.goal.pol, dist: rig.goal.dist };
     rig.goal.pol = 0.03;
     rig.goal.dist = Math.max(rig.goal.dist, 74);
@@ -384,12 +450,13 @@ function buildPieces() {
   const st = G.st, N = st.topo.cols, defs = st.set.pieces;
   const geos = defs.map(pieceGeometry);
   st.players.forEach((pl, p) => {
-    const lay = Logic.trayLayout(defs, N, Logic.seatOut(p, st.players.length));
+    const lay = Logic.trayLayout(defs, N, Logic.seatOut(p, st.players.length), G.narrow);
     const col = new THREE.Color(COLORS[pl.color]);
     G.P.push(defs.map((def, i) => {
       const mat = new THREE.MeshPhysicalMaterial({
-        color: col, roughness: 0.2, metalness: 0, clearcoat: 0.9, clearcoatRoughness: 0.18,
-        emissive: col, emissiveIntensity: 0.05
+        // 光泽适中：有塑料的质感，但不会把吊灯整块反射成白色
+        color: col, roughness: 0.45, metalness: 0, clearcoat: 0.3, clearcoatRoughness: 0.45,
+        specularIntensity: 0.55, envMapIntensity: 0.35, emissive: col, emissiveIntensity: 0.05
       });
       const mesh = new THREE.Mesh(geos[i], mat);
       mesh.castShadow = true; mesh.receiveShadow = true;
@@ -398,6 +465,20 @@ function buildPieces() {
       pieceGroup.add(mesh);
       return pc;
     }));
+  });
+}
+
+// 竖屏 / 横屏切换时重新摆放各座位面前的棋子
+function relayoutTrays() {
+  const st = G.st, N = st.topo.cols, defs = st.set.pieces;
+  st.players.forEach((pl, p) => {
+    const lay = Logic.trayLayout(defs, N, Logic.seatOut(p, st.players.length), G.narrow);
+    G.P[p].forEach((pc, i) => {
+      pc.home = lay.slots[i];
+      if (pc.where !== 'tray') return;
+      pc.k = pc.home.k; pc.flip = false;
+      animate(pc, homePos(pc), quatFor(pc.k, false), 0.45, 1.2);
+    });
   });
 }
 
@@ -540,13 +621,12 @@ function nextTurn() {
   if (st.over) { endGame(); return; }
   const p = st.current;
   if (isHuman(p)) {
-    if (humanCount() > 1 || rig.spin) {
-      const az = nearestAngle(rig.goal.az, seatAzimuth(p));
-      rig.goal.az = az; rig.goal.target.copy(seatTarget(az));
-    }
+    lockCamera(p);
     showAnchors();
     return;
   }
+  // 电脑回合：镜头放开，停在自己的视角，可以随意环顾
+  rig.lock = null;
   anchors.count = 0;
   const gen = G.gen, t0 = performance.now();
   askAI(st.players[p].level).then((move) => {
@@ -596,6 +676,7 @@ function endGame() {
   $('end-rows').innerHTML = rows.map((r) =>
     '<li><b>' + r.rank + '</b><i style="background:' + COLORS[r.player.color] + '"></i><span>' + esc(nameOf(r.index)) + '</span>' +
     '<em>' + esc(t('pieces', { n: r.piecesLeft })) + ' · ' + esc(t('cells', { n: r.remainingSquares })) + '</em></li>').join('');
+  rig.lock = null;
   rig.spin = 0.12;
   if (rig.top) setTopView(false);
   rig.goal.pol = 0.95; rig.goal.target.set(0, 0, 0);
@@ -782,6 +863,7 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   press = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, button: e.button, moved: false, touch: e.pointerType !== 'mouse' };
   dragHeld = false;
+  if (!press.touch && G.held && e.button === 0) dragHeld = true;
   if (press.touch) {
     // 触屏：按住自己的棋子直接拖
     if (heldAt(e)) dragHeld = true;
@@ -799,7 +881,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (pointers.size === 2) {
     const p = Array.from(pointers.values());
     const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
-    if (pinch > 0 && d > 0) rig.goal.dist *= pinch / d;
+    if (pinch > 0 && d > 0) zoomBy(pinch / d);
     pinch = d;
     return;
   }
@@ -847,6 +929,8 @@ function endPointer(e) {
   const wasDrag = dragHeld;
   dragHeld = false;
   if (!p || e.type === 'pointercancel') return;
+  // 鼠标按住拖到棋盘上松开：能放就直接落子
+  if (p.moved && wasDrag && !p.touch && G.heldCell && G.heldCell.ok) { tryPlace(); return; }
   if (p.moved) return;
   // 没有移动：一次点击
   if (p.button === 2) { rotateHeld(-1); return; }
@@ -879,7 +963,7 @@ canvas.addEventListener('wheel', (e) => {
     if (now - (G.lastWheel || 0) > 110) { rotateHeld(e.deltaY > 0 ? -1 : 1); G.lastWheel = now; }
     return;
   }
-  rig.goal.dist *= Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.0012));
+  zoomBy(Math.exp(e.deltaY * (e.ctrlKey ? 0.01 : 0.0012)));
 }, { passive: false });
 
 window.addEventListener('keydown', (e) => {
@@ -894,8 +978,8 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'enter' || k === ' ') { if (G.held) { e.preventDefault(); tryPlace(); } }
   else if (k === 'v') setTopView(!rig.top);
   else if (k === 'h') showSuggestion();
-  else if (k === '=' || k === '+') rig.goal.dist *= 0.88;
-  else if (k === '-') rig.goal.dist *= 1.14;
+  else if (k === '=' || k === '+') zoomBy(0.88);
+  else if (k === '-') zoomBy(1.14);
 });
 
 /* ================= 界面 ================= */
@@ -918,7 +1002,7 @@ function renderHud() {
   $('players').innerHTML = st.players.map((pl, i) => {
     const left = pl.remaining.filter(Boolean).length;
     const sub = pl.done && left ? t('done') : t('left', { n: left });
-    return '<li class="' + (i === p && !st.over ? 'on' : '') + (pl.done ? ' out' : '') + '" style="--c:' + COLORS[pl.color] + '"><i></i><span>' + esc(nameOf(i)) +
+    return '<li class="' + (i === p && !st.over ? 'on' : '') + (pl.done ? ' out' : '') + '" data-n="' + left + '" style="--c:' + COLORS[pl.color] + '"><i></i><span>' + esc(nameOf(i)) +
       (isHuman(i) ? '' : '<small>' + esc(t('l.' + pl.level)) + '</small>') + '</span><em>' + esc(sub) + '</em></li>';
   }).join('');
   $('undo-btn').disabled = Logic.undoTarget(st.actions, isHuman) < 0;
@@ -1049,6 +1133,7 @@ function applyEnvironment(id) {
   $('env-name').textContent = cfg.name[LANG] || cfg.name.en;
   document.documentElement.dataset.env = cfg.id;
   if (quality) applyQuality();
+  perf.warm = 0;
 }
 
 // 对局中切换环境：只换房间、桌子和灯光，棋局原样保留
@@ -1069,24 +1154,33 @@ function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  // 竖屏时把视野放宽，保证棋盘和面前的棋子都在画面里
-  camera.fov = w / h < 1 ? THREE.MathUtils.clamp(38 / (w / h) * 0.82, 38, 70) : 38;
+  // 竖屏视野稍宽一些；固定视角会按画面大小重新取景
+  camera.fov = w / h < 1 ? 50 : 40;
   camera.updateProjectionMatrix();
+  const narrow = w / h < 0.8;
+  if (narrow !== G.narrow) {
+    G.narrow = narrow;
+    if (G.st && G.P.length) relayoutTrays();
+  }
+  if (rig.lock && G.st && !G.st.over) lockCamera(G.st.current);
 }
 
 const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 let lastT = performance.now(), clock = 0;
-const perf = { n: 0, sum: 0 };
+const perf = { n: 0, sum: 0, slow: 0, warm: 0 };
 
 function frame(now) {
   const raw = (now - lastT) / 1000;
   const dt = Math.min(0.25, raw);
   lastT = now; clock += dt;
   // 连续一段时间帧率太低就降一档画质
-  if (!document.hidden && raw < 1.5) {
+  // 启动和换环境后的头几秒不算；连续两段（各约 1.5 秒）都低于 24 帧才降一档
+  perf.warm += dt;
+  if (!document.hidden && raw < 1.5 && perf.warm > 3) {
     perf.n++; perf.sum += raw;
-    if (perf.n >= 45) {
-      if (perf.sum / perf.n > 1 / 28 && quality < 2 && !qParam) { quality++; applyQuality(); }
+    if (perf.n >= 90) {
+      perf.slow = perf.sum / perf.n > 1 / 24 ? perf.slow + 1 : 0;
+      if (perf.slow >= 2 && quality < QUALITY.length - 1 && !qParam) { quality++; perf.slow = 0; perf.warm = 0; applyQuality(); }
       perf.n = 0; perf.sum = 0;
     }
   }

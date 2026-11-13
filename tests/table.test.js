@@ -41,12 +41,20 @@ test('三维牌桌：换朝向时优先少转、不翻面', () => {
 });
 
 test('三维牌桌：各座位的棋子摆在棋盘外、互不重叠，也不占到别的座位', () => {
-  for (const [size, count] of [[20, 4], [14, 2]]) {
+  for (const [size, count, narrow] of [[20, 4, false], [14, 2, false], [20, 4, true], [14, 2, true]]) {
     const occupied = new Map();
     let reach = 0;
     for (let s = 0; s < count; s++) {
       const out = Logic.seatOut(s, count);
-      const lay = Logic.trayLayout(PIECES, size, out);
+      const lay = Logic.trayLayout(PIECES, size, out, narrow);
+      if (narrow) {
+        // 竖屏：每块都不超出棋盘的宽度
+        const right = Logic.seatRight(out);
+        lay.slots.forEach((slot, i) => Logic.pose(PIECES[i], slot.k, false).offsets.forEach((o) => {
+          const u = (slot.x + o[0] - (size - 1) / 2) * right[0] + (slot.z + o[1] - (size - 1) / 2) * right[1];
+          assert.ok(Math.abs(u) <= size / 2 + 0.6, 'narrow row too wide: ' + u);
+        }));
+      }
       reach = Math.max(reach, lay.reach);
       lay.slots.forEach((slot, i) => {
         Logic.pose(PIECES[i], slot.k, false).offsets.forEach((o) => {

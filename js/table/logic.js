@@ -79,8 +79,9 @@
   /**
    * 一个座位面前的棋子摆放：从棋盘边往外排成几行，越往外越宽（不占到相邻座位的区域）。
    * 返回每块棋子的 { x, z, k }（模型原点的棋盘坐标和摆放姿态）和用到的最远距离 reach。
+   * narrow：每行不宽于棋盘（竖屏时用，棋盘才能占满画面宽度）。
    */
-  function trayLayout(pieces, size, out) {
+  function trayLayout(pieces, size, out, narrow) {
     var right = seatRight(out);
     var c = (size - 1) / 2;
     var GAP = 0.9;
@@ -102,7 +103,7 @@
     var reach = 0;
     var i = 0;
     while (i < items.length) {
-      var maxW = Math.min(2 * v - 2.5, size + 18);
+      var maxW = narrow ? size + 1 : Math.min(2 * v - 2.5, size + 18);
       var row = [], w = 0, h = 0;
       while (i < items.length && (row.length === 0 || w + GAP + items[i].wU <= maxW)) {
         w += (row.length ? GAP : 0) + items[i].wU;
