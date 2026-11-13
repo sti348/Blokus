@@ -151,6 +151,7 @@ const rig = {
   goal: { az: 0, pol: 0.86, dist: 64, target: new THREE.Vector3(0, 0, 5) },
   top: false, saved: null, spin: 0,
   lock: null,   // 轮到自己时固定的视角 { az, pol, dist, target }；拖动只是临时看看，松手就回来
+  holdLock: null, // 手里拿着棋子时的视角：转到棋盘正上方
   zoom: 1       // 双指 / 滚轮缩放（相对固定视角的距离）
 };
 
@@ -171,14 +172,16 @@ const fitCam = new THREE.PerspectiveCamera();
 const fitV = new THREE.Vector3();
 
 // 轮到某位真人时的固定视角：从他的座位看过去，棋盘和面前的棋子都完整地在画面里，界面也不挡住
-function playView(p) {
+// hold：手里拿着棋子时，从棋盘正上方看，只取景棋盘
+function playView(p, hold) {
   const st = G.st, N = st.topo.cols;
   const az = seatAzimuth(p);
   const portrait = camera.aspect < 1;
-  const pol = rig.top ? 0.1 : portrait ? 0.62 : 0.72;
+  const pol = hold ? 0.06 : rig.top ? 0.1 : portrait ? 0.62 : 0.72;
   const pts = [];
-  [[-1.5, -1.5], [N + 0.5, -1.5], [-1.5, N + 0.5], [N + 0.5, N + 0.5]].forEach((c) => pts.push(new THREE.Vector3(c[0], 0, c[1])));
-  G.P[p].forEach((pc) => {
+  const m = hold ? 1.2 : 1.5;
+  [[-m, -m], [N - 1 + m, -m], [-m, N - 1 + m], [N - 1 + m, N - 1 + m]].forEach((c) => pts.push(new THREE.Vector3(c[0], 0, c[1])));
+  if (!hold) G.P[p].forEach((pc) => {
     if (pc.where !== 'tray' && pc !== G.held) return;
     Logic.pose(pc.def, pc.home.k, false).offsets.forEach((o) => pts.push(new THREE.Vector3(pc.home.x + o[0], TRAY_Y, pc.home.z + o[1])));
   });
@@ -214,7 +217,8 @@ function zoomBy(f) {
 }
 
 function lockCamera(p) {
-  rig.lock = p == null ? null : playView(p);
+  rig.lock = p == null ? null : playView(p, false);
+  rig.holdLock = p == null ? null : playView(p, true);
   if (rig.lock) {
     rig.lock.az = nearestAngle(rig.goal.az, rig.lock.az);
     rig.spin = 0;
@@ -223,9 +227,10 @@ function lockCamera(p) {
 
 function updateCamera(dt) {
   const g = rig.goal;
-  // 固定视角：没在拖动时，镜头回到摆棋的位置
-  if (rig.lock && !press && pointers.size === 0) {
-    const L = rig.lock;
+  // 固定视角：没在转镜头时，镜头回到摆棋的位置；手里拿着棋子时转到棋盘正上方
+  const orbiting = (press && !dragHeld) || pointers.size > 1;
+  if (rig.lock && !orbiting) {
+    const L = G.held && rig.holdLock ? rig.holdLock : rig.lock;
     L.az = nearestAngle(g.az, L.az);
     g.az = L.az; g.pol = L.pol; g.dist = L.dist * rig.zoom; g.target.copy(L.target);
   }
@@ -778,6 +783,22 @@ function aimHeld(lx, lz) {
   renderHold();
 }
 
+// 触屏点起棋子时，先把它放到离自己最近的一个角点上（镜头转到正上方后一眼就能看到）
+function aimDefault() {
+  const st = G.st, p = st.current, N = st.topo.cols;
+  const forb = Engine.forbiddenMask(st.board, st.topo, p);
+  const list = Engine.anchorMask(st.board, st.topo, p, st.players[p], forb).list;
+  const out = Logic.seatOut(p, st.players.length), c = (N - 1) / 2;
+  let best = null, bestV = -Infinity;
+  list.forEach((idx) => {
+    const x = idx % N, y = Math.floor(idx / N);
+    const v = (x - c) * out[0] + (y - c) * out[1];
+    if (v > bestV) { bestV = v; best = [x, y]; }
+  });
+  G.aimScreen = null;
+  if (best) aimHeld(best[0], best[1]); else aimHeld(c, c);
+}
+
 function refreshHeld() {
   if (G.held && G.heldAim) aimHeld(G.heldAim.x, G.heldAim.z);
   renderHold();
@@ -840,6 +861,7 @@ function pieceAt(e) {
 }
 
 function boardPoint(e, dy) {
+  G.aimScreen = { clientX: e.clientX, clientY: e.clientY, dy: dy || 0 };
   setRay(e, dy);
   const v = new THREE.Vector3();
   if (!ray.ray.intersectPlane(boardPlane, v)) return null;
@@ -869,7 +891,7 @@ canvas.addEventListener('pointerdown', (e) => {
     if (heldAt(e)) dragHeld = true;
     else {
       const pc = pieceAt(e);
-      if (pc) { pickUp(pc); dragHeld = true; press.picked = true; }
+      if (pc) { pickUp(pc); dragHeld = true; press.picked = true; aimDefault(); }
     }
   }
   if (rig.spin) rig.spin = 0;
@@ -1185,6 +1207,13 @@ function frame(now) {
     }
   }
   updateCamera(dt);
+  if (G.held && G.aimScreen && camera.position.distanceToSquared(G.lastCamPos || camera.position.clone().addScalar(1)) > 1e-4) {
+    const a = G.aimScreen;
+    setRay(a, a.dy);
+    const v = new THREE.Vector3();
+    if (ray.ray.intersectPlane(boardPlane, v)) { off.worldToLocal(v); aimHeld(v.x, v.z); }
+  }
+  G.lastCamPos = (G.lastCamPos || new THREE.Vector3()).copy(camera.position);
 
   // 棋子的移动动画
   for (let i = G.anims.length - 1; i >= 0; i--) {
@@ -1221,6 +1250,15 @@ function frame(now) {
       }
       const glow = 0.05 + (hover ? 0.2 : 0) + pc.glow + (pc === G.held ? 0.12 : 0);
       pc.mat.emissiveIntensity += (glow - pc.mat.emissiveIntensity) * (1 - Math.exp(-dt * 8));
+      // 手里的棋子半透明：从正上方看也能透过它看到脚下的绿色 / 红色落点
+      const op = pc === G.held && G.heldCell ? 0.62 : 1;
+      if (Math.abs(pc.mat.opacity - op) > 0.005) {
+        pc.mat.opacity += (op - pc.mat.opacity) * (1 - Math.exp(-dt * 12));
+        if (Math.abs(pc.mat.opacity - op) <= 0.005) pc.mat.opacity = op;
+        const tr = pc.mat.opacity < 1;
+        if (tr !== pc.mat.transparent) { pc.mat.transparent = tr; pc.mat.depthWrite = !tr; pc.mat.needsUpdate = true; }
+        pc.mesh.castShadow = !tr;
+      }
     }));
   }
   if (G.last && G.last.glow > 0.14) G.last.glow = Math.max(0.14, G.last.glow - dt * 0.12);
