@@ -290,7 +290,7 @@
     'table.arMove': 'Mover tablero',
     'table.arFind': 'Mueve el móvil despacio y apunta a una mesa o al suelo…',
     'table.arPlace': 'Superficie encontrada · toca la pantalla para dejar el tablero aquí',
-    'table.arGuess': 'Aún no se encontró una superficie: el tablero flota delante de ti · toca para dejarlo o sigue apuntando a una mesa (las superficies brillantes, reflectantes u oscuras cuestan más)',
+    'table.arGuess': 'Aún no se encontró una superficie: el marco amarillo está delante de ti · toca para dejar el tablero ahí o sigue apuntando a una mesa (las superficies brillantes, reflectantes u oscuras cuestan más)',
     'table.arTip': 'Toca o arrastra una de tus piezas · arrastra un espacio vacío para girar el tablero · pellizca para cambiar el tamaño · o camina alrededor',
     'table.arFail': 'La AR no está disponible en este dispositivo (requiere Chrome en Android y Servicios de Google Play para AR)',
     'keys.flat': 'Elige una pieza, muévete sobre el tablero y haz clic para colocarla · R girar · F voltear · flechas mover · Enter colocar · Esc cancelar',

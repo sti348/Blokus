@@ -279,7 +279,7 @@
     'table.arMove': '重新擺放',
     'table.arFind': '慢慢移動手機，對準一張桌子或地面…',
     'table.arPlace': '找到平面了 · 點螢幕把棋盤放在這裡',
-    'table.arGuess': '沒辨識到平面，棋盤先浮在你面前 · 點螢幕放下，或繼續對準桌面（光滑、反光或太暗的表面不好辨識）',
+    'table.arGuess': '沒辨識到平面，黃框先放在你面前 · 點螢幕就把棋盤放下，或繼續對準桌面（光滑、反光或太暗的表面不好辨識）',
     'table.arTip': '點或拖自己的棋子 · 拖空白處轉動棋盤 · 雙指縮放 · 也可以拿著手機繞著走',
     'table.arFail': '這台裝置打不開 AR（需要 Android Chrome 和 Google Play 的 AR 服務）',
     'keys.flat': '點選棋子後移到棋盤上點擊放置 · R 旋轉 · F 翻轉 · 方向鍵移動 · Enter 放置 · Esc 取消',
