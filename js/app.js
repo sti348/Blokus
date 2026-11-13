@@ -3172,8 +3172,11 @@
     var act = !isReplay() && canAct();
     var has = act && game.sel.piece >= 0;
     var ar = table.arState();
-    var arWait = ar.on && !ar.placed;   // AR：还没把棋盘放到桌面上
+    var arWait = ar.on && !ar.placed;   // AR：棋盘还在跟着手机（没固定）
     $('th-hold').hidden = !has || arWait;
+    // AR 操作条（调高低、固定）：拿着棋子时让位给棋子的操作条
+    $('ar-bar').hidden = !ar.on || (has && !arWait);
+    $('ar-fix').hidden = !arWait;
     var cube = is3D();
     $('th-flip').title = t(isCube() ? 'ctl.tipForward' : cube ? 'ctl.flipOver' : 'table.mirror');
     $('th-flip').setAttribute('aria-label', $('th-flip').title);
@@ -3183,8 +3186,7 @@
     $('th-stop').hidden = !act || arWait;
     var touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     var tip = ar.on && ar.lost ? t('table.arLost') :
-      arWait ? (ar.found ? t('table.arPlace') :
-        (ar.reset ? t('table.arReset') + ' · ' : '') + t(ar.sec >= 10 ? 'table.arHard' : 'table.arFind') + (ar.sec >= 2 ? ' ' + ar.sec + 's' : '')) :
+      arWait ? (ar.reset ? t('table.arReset') + ' · ' : '') + t('table.arManual') :
       !act ? '' : t(has ? (touch ? 'table.tipHoldTouch' : 'table.tipHold') : ar.on ? 'table.arTip' : (touch ? 'table.tipPickTouch' : 'table.tipPick'));
     // AR 画面里出错时直接显示出来（方便截图反馈）
     if (ar.on && ar.err) tip += ' ⚠ ' + ar.err;
@@ -4407,6 +4409,19 @@
       table.enterAR($('game')).then(function (ok) { if (!ok) toast(t('table.arFail') + (table.arFail() ? ' — ' + table.arFail() : ''), 'warn'); });
     });
     $('tu-ar-move').addEventListener('click', function () { if (table) table.replaceAR(); });
+    $('ar-fix').addEventListener('click', function () { if (table) table.placeAR(); });
+    // 调高低：点一下 1 厘米，按住连续调
+    [['ar-up', 0.01], ['ar-down', -0.01]].forEach(function (b) {
+      var el = $(b[0]), timer = null, rep = null;
+      function stop() { clearTimeout(timer); clearInterval(rep); timer = rep = null; }
+      el.addEventListener('pointerdown', function () {
+        if (!table) return;
+        table.nudgeAR(b[1]);
+        stop();
+        timer = setTimeout(function () { rep = setInterval(function () { table.nudgeAR(b[1]); }, 60); }, 350);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) { el.addEventListener(ev, stop); });
+    });
     $('tu-hints').addEventListener('click', function () { $('opt-hints').checked = prefs.hints = !prefs.hints; savePrefs(); renderTableTools(); drawBoard(); });
     $('tu-sound').addEventListener('click', function () { $('sound-btn').click(); renderTableTools(); });
     $('tu-help').addEventListener('click', function () { $('help-btn').click(); });

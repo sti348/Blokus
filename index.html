@@ -190,6 +190,11 @@
       </header>
       <ul class="tu-players" id="tu-players"></ul>
       <div class="tu-bottom">
+        <div class="tu-hold ar-bar" id="ar-bar" hidden>
+          <button type="button" id="ar-down" data-i18n-attr="title:table.arDown" title="Lower"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg><span data-i18n="table.arDown">Lower</span></button>
+          <button type="button" id="ar-up" data-i18n-attr="title:table.arUp" title="Raise"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg><span data-i18n="table.arUp">Raise</span></button>
+          <button type="button" id="ar-fix" class="primary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10M8 9l4 4 4-4"/><path d="M5 17h14v3H5z"/></svg><span data-i18n="table.arFix">Fix here</span></button>
+        </div>
         <div class="tu-hold" id="th-hold" hidden>
           <button type="button" id="th-rot-cw" data-i18n-attr="title:ctl.rotRight" title="Rotate right"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg><span data-i18n="table.rotate">Rotate</span></button>
           <button type="button" id="th-flip" title="Mirror"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18"/><path d="M8 7 3 12l5 5z"/><path d="m16 7 5 5-5 5z" fill="currentColor"/></svg><span id="th-flip-label"></span></button>
