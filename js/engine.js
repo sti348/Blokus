@@ -11,8 +11,6 @@
   var SETS = Pieces.SETS;
   var EMPTY = -1;
   var BLOCKED = -2;
-  var WORD = -3;      // 律令：词块占着的格子
-  var STOP = -4;      // 律令：「禁区」里的空格（律令撤掉后变回空格）
 
   var FOUR = [
     { color: 'blue', label: '蓝' },
@@ -86,22 +84,6 @@
       // 原版只比剩下的格子数，没有全部放完的奖励分
       bonus: false,
       seats: SIX
-    },
-    // 律令：方格棋盘分成标了分值的地盘，终局时每块地盘归格子最多的一方。
-    // 棋盘上的词块连成「名词 是 效果」就成为律令，改写计分；落子时边贴着的词块会被推开一格
-    decree: {
-      name: '律令',
-      shape: 'square',
-      sizeFor: { 2: 14, 4: 18 },
-      counts: [2, 4],
-      seats: FOUR,
-      districts: true,
-      bonus: false,
-      // 各方从角落出发（按行棋顺序）：两人对角，四人四角顺时针
-      startsFor: function (size, count) {
-        var e = size - 1;
-        return count === 2 ? [[0, 0], [e, e]] : [[0, 0], [e, 0], [e, e], [0, e]];
-      }
     }
   };
 
@@ -525,7 +507,6 @@
         p.color = seat.color;
         p.label = seat.label;
         p.starts = seat.start ? [seat.start.slice()]
-          : m.startsFor ? [m.startsFor(size, entries.length)[order].slice()]
           : topo.orderStarts ? [topo.orderStarts[order % topo.orderStarts.length].slice()]
           : topo.seatStarts ? [topo.seatStarts[e.seat].slice()]
           : topo.starts.map(function (s) { return s.slice(); });
@@ -578,243 +559,8 @@
       lastMove: null,
       over: false
     };
-    if (MODES[mode].districts) {
-      state.districts = districtLayout(config.size);
-      state.words = initialWords(config.size).map(function (w) {
-        var i = w.y * topo.cols + w.x;
-        board[i] = WORD;
-        return { id: w.id, word: w.word, cell: i };
-      });
-      state.rules = readRules(state);
-      applyRules(state);
-    }
     settle(state);
     return state;
-  }
-
-  /* ================= 律令：地盘、词块、律令 ================= */
-
-  // 名词（作用在哪些地盘）、连接词、效果
-  var NOUNS = ['crown', 'edge', 'all'];
-  var PROPS = ['double', 'zero', 'flip', 'stop', 'drop', 'win'];
-  var WORDS = NOUNS.concat(['is'], PROPS);
-
-  /**
-   * 地盘布局：左上象限按模板划分，绕棋盘中心转 90° 铺满另外三个象限（每个座位面对的局面完全相同），
-   * 中心 4×4 是王城。返回 { of: 每格所属地盘（-1 = 不属于）, list: [{ id, cells, value, crown, edge }] }
-   */
-  var QUAD_TEMPLATES = {
-    // 2 人 14×14：象限 7×7，扣掉内角 2×2（王城）
-    7: [
-      { v: 1, r: [[0, 0, 3, 3]] },
-      { v: 2, r: [[3, 0, 4, 3]] },
-      { v: 2, r: [[0, 3, 3, 4]] },
-      { v: 3, r: [[3, 3, 4, 2], [3, 5, 2, 2]] }
-    ],
-    // 4 人 18×18：象限 9×9
-    9: [
-      { v: 1, r: [[0, 0, 3, 3]] },
-      { v: 2, r: [[3, 0, 6, 3]] },
-      { v: 2, r: [[0, 3, 3, 6]] },
-      { v: 2, r: [[3, 3, 4, 4]] },
-      { v: 3, r: [[7, 3, 2, 4]] },
-      { v: 3, r: [[3, 7, 4, 2]] }
-    ]
-  };
-  var CROWN_VALUE = 5;
-  var layoutCache = {};
-
-  function districtLayout(size) {
-    if (layoutCache[size]) return layoutCache[size];
-    var q = size / 2, tpl = QUAD_TEMPLATES[q];
-    var of = new Int16Array(size * size).fill(-1);
-    var list = [];
-    function add(cells, value, crown) {
-      var id = list.length;
-      var edge = false;
-      cells.forEach(function (c) {
-        of[c[1] * size + c[0]] = id;
-        if (c[0] === 0 || c[1] === 0 || c[0] === size - 1 || c[1] === size - 1) edge = true;
-      });
-      list.push({ id: id, cells: cells.map(function (c) { return c[1] * size + c[0]; }), value: value, crown: !!crown, edge: edge });
-    }
-    // 绕中心顺时针转 90°：(x, y) → (size-1-y, x)
-    function rot(c, k) {
-      var x = c[0], y = c[1];
-      for (var t = 0; t < k; t++) { var nx = size - 1 - y; y = x; x = nx; }
-      return [x, y];
-    }
-    for (var k = 0; k < 4; k++) {
-      tpl.forEach(function (d) {
-        var cells = [];
-        d.r.forEach(function (r) {
-          for (var y = r[1]; y < r[1] + r[3]; y++) for (var x = r[0]; x < r[0] + r[2]; x++) cells.push(rot([x, y], k));
-        });
-        add(cells, d.v, false);
-      });
-    }
-    var crown = [];
-    for (var y = q - 2; y < q + 2; y++) for (var x = q - 2; x < q + 2; x++) crown.push([x, y]);
-    add(crown, CROWN_VALUE, true);
-    layoutCache[size] = { of: of, list: list };
-    return layoutCache[size];
-  }
-
-  // 开局的词块：上方一句已经成立（王城 是 双倍），右、下、左三组各差一步，另有散放的「空降」「禁区」
-  function initialWords(size) {
-    var a = size === 14 ? 3 : 5, c = size / 2, b = size - 1 - a;
-    var w = [
-      [c - 2, a, 'crown'], [c - 1, a, 'is'], [c, a, 'double'],
-      [b, c - 2, 'all'], [b, c - 1, 'is'], [b, c + 1, 'flip'],
-      [c - 2, b, 'edge'], [c - 1, b, 'is'], [c + 1, b, 'zero'],
-      [a, c - 2, 'crown'], [a, c - 1, 'is'], [a, c + 1, 'win'],
-      [a + 1, a + 1, 'drop'], [b - 1, b - 1, 'stop']
-    ];
-    return w.map(function (t, i) { return { id: i, x: t[0], y: t[1], word: t[2] }; });
-  }
-
-  // 读出现在成立的律令：一行里从左到右、一列里从上到下连着「名词 是 效果」
-  function readRules(state) {
-    var topo = state.topo, cols = topo.cols;
-    var at = {};
-    state.words.forEach(function (w) { at[w.cell] = w.word; });
-    var rules = [], seen = {};
-    state.words.forEach(function (w) {
-      if (NOUNS.indexOf(w.word) < 0) return;
-      var x = w.cell % cols, y = (w.cell - x) / cols;
-      [[1, 0], [0, 1]].forEach(function (d) {
-        var x1 = x + d[0], y1 = y + d[1], x2 = x + 2 * d[0], y2 = y + 2 * d[1];
-        if (x2 >= cols || y2 >= topo.rows) return;
-        var mid = at[y1 * cols + x1], prop = at[y2 * cols + x2];
-        if (mid !== 'is' || PROPS.indexOf(prop) < 0) return;
-        var key = w.word + ':' + prop;
-        if (seen[key]) return;
-        seen[key] = true;
-        rules.push({ noun: w.word, prop: prop });
-      });
-    });
-    return rules;
-  }
-
-  /**
-   * 落子后推词块：边贴着新棋子的词块，朝「从棋子指向词块」的方向推一格；
-   * 同一方向上连着的词块一起推，前面不是空格就推不动。被几个方向同时贴着的词块不动。
-   * 返回被推动的 [{ id, from, to }]
-   */
-  function pushWords(state, cells) {
-    var topo = state.topo, cols = topo.cols, board = state.board;
-    var byCell = {};
-    state.words.forEach(function (w) { byCell[w.cell] = w; });
-    var placed = {};
-    cells.forEach(function (i) { placed[i] = true; });
-    var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-    var req = [];
-    state.words.forEach(function (w) {
-      var x = w.cell % cols, y = (w.cell - x) / cols;
-      var found = [];
-      dirs.forEach(function (d) {
-        // 棋子在词块的反方向一侧 → 推向 d
-        var px = x - d[0], py = y - d[1];
-        if (px >= 0 && py >= 0 && px < cols && py < topo.rows && placed[py * cols + px]) found.push(d);
-      });
-      if (found.length === 1) req.push({ w: w, d: found[0], x: x, y: y });
-    });
-    // 沿推的方向从远到近处理，免得互相挡住
-    req.sort(function (a, b) {
-      return (b.x * b.d[0] + b.y * b.d[1]) - (a.x * a.d[0] + a.y * a.d[1]);
-    });
-    var moved = [], done = {};
-    req.forEach(function (r) {
-      if (done[r.w.id]) return;
-      var chain = [], x = r.x, y = r.y;
-      while (true) {
-        var w = byCell[y * cols + x];
-        if (!w) break;
-        chain.push(w);
-        x += r.d[0]; y += r.d[1];
-        if (x < 0 || y < 0 || x >= cols || y >= topo.rows) return;
-      }
-      if (board[y * cols + x] !== EMPTY) return;
-      for (var k = chain.length - 1; k >= 0; k--) {
-        var cw = chain[k];
-        var from = cw.cell, to = from + r.d[0] + r.d[1] * cols;
-        board[to] = WORD;
-        board[from] = EMPTY;
-        delete byCell[from];
-        byCell[to] = cw;
-        cw.cell = to;
-        done[cw.id] = true;
-        moved.push({ id: cw.id, from: from, to: to });
-      }
-    });
-    return moved;
-  }
-
-  // 一块地盘受哪些律令影响：倍数（每条「双倍」×2）、归零、反转
-  function districtRules(d, rules) {
-    var o = { mult: 1, zero: false, flip: false, stop: false, drop: false, win: false };
-    rules.forEach(function (r) {
-      var hit = r.noun === 'all' || (r.noun === 'crown' && d.crown) || (r.noun === 'edge' && d.edge);
-      if (!hit) return;
-      if (r.prop === 'double') o.mult *= 2;
-      else o[r.prop] = true;
-    });
-    return o;
-  }
-
-  /**
-   * 律令变了以后：「禁区」地盘的空格标成 STOP（撤掉的变回空格），「空降」地盘的格子记进 state.drop；
-   * 已经卡住的玩家重新获得机会（律令可能给他们让出了路）
-   */
-  function applyRules(state) {
-    var board = state.board, n = board.length, D = state.districts;
-    for (var i = 0; i < n; i++) if (board[i] === STOP) board[i] = EMPTY;
-    var drop = new Uint8Array(n), anyDrop = false;
-    D.list.forEach(function (d) {
-      var r = districtRules(d, state.rules);
-      for (var k = 0; k < d.cells.length; k++) {
-        var c = d.cells[k];
-        if (r.stop && board[c] === EMPTY) board[c] = STOP;
-        if (r.drop) { drop[c] = 1; anyDrop = true; }
-      }
-    });
-    state.drop = anyDrop ? drop : null;
-  }
-
-  /**
-   * 各地盘现在归谁、值多少分，以及每位玩家的总分。
-   * 平常：格子严格最多的一方拿分；「反转」时：占了格子的人里格子严格最少的一方拿分。平手谁都不拿。
-   */
-  function districtStatus(state) {
-    var D = state.districts, n = state.players.length, board = state.board;
-    var totals = new Array(n).fill(0), won = new Array(n).fill(0), wins = new Array(n).fill(0);
-    var rules = state.rules || [];
-    var list = D.list.map(function (d) {
-      var counts = new Array(n).fill(0);
-      for (var i = 0; i < d.cells.length; i++) {
-        var v = board[d.cells[i]];
-        if (v >= 0) counts[v]++;
-      }
-      var r = districtRules(d, rules);
-      var worth = r.zero ? 0 : d.value * r.mult;
-      var leader = -1, best = r.flip ? Infinity : 0, tie = false;
-      for (var p = 0; p < n; p++) {
-        var c = counts[p];
-        if (r.flip ? c > 0 && c < best : c > best) { best = c; leader = p; tie = false; }
-        else if (c > 0 && c === best) tie = true;
-      }
-      if (tie) leader = -1;
-      if (leader >= 0) {
-        totals[leader] += worth;
-        won[leader]++;
-        if (r.win) wins[leader]++;
-      }
-      return {
-        id: d.id, value: d.value, worth: worth, mult: r.mult, zero: r.zero, flip: r.flip, stop: r.stop, drop: r.drop, win: r.win,
-        counts: counts, leader: leader, tie: tie
-      };
-    });
-    return { list: list, totals: totals, won: won, wins: wins };
   }
 
   function placementCells(state, pieceIndex, orient, x, y, z) {
@@ -915,21 +661,15 @@
   }
 
   // 角点：玩家 p 下一块棋子必须覆盖其中之一
-  function anchorMask(board, topo, p, player, forb, drop) {
+  function anchorMask(board, topo, p, player, forb) {
     var n = topo.n;
     var mark = new Uint8Array(n);
     var list = [];
     var i;
-    // 律令「空降」：这些格子不用接自己的棋子，只要不是禁止的格子都能落
-    if (drop) {
-      for (i = 0; i < n; i++) {
-        if (drop[i] && !forb[i]) { mark[i] = 1; list.push(i); }
-      }
-    }
     if (player.placed === 0) {
       for (i = 0; i < player.startIdx.length; i++) {
         var s = player.startIdx[i];
-        if (board[s] === EMPTY && !mark[s] && !forb[s]) {
+        if (board[s] === EMPTY && !mark[s]) {
           mark[s] = 1;
           list.push(s);
         }
@@ -937,7 +677,7 @@
       return { mark: mark, list: list };
     }
     for (i = 0; i < n; i++) {
-      if (forb[i] || mark[i]) continue;
+      if (forb[i]) continue;
       var c = topo.corners[i];
       for (var k = 0; k < c.length; k++) {
         if (board[c[k]] === p && cornerOpen(topo, board, i, k)) {
@@ -960,7 +700,7 @@
     var cols = topo.cols, rows = topo.rows, parity = topo.parity;
     var player = state.players[p];
     var forb = forbiddenMask(board, topo, p);
-    var anchors = anchorMask(board, topo, p, player, forb, state.drop);
+    var anchors = anchorMask(board, topo, p, player, forb);
     var mark = anchors.mark, list = anchors.list;
     if (!list.length) return;
     var remaining = pieceFilter || player.remaining;
@@ -1045,17 +785,11 @@
       }
       idx.push(cellIndex(topo, cells[i]));
     }
-    for (i = 0; i < idx.length; i++) {
-      if (board[idx[i]] === STOP) return 'stop';
-      if (board[idx[i]] !== EMPTY) return 'occupied';
-    }
+    for (i = 0; i < idx.length; i++) if (board[idx[i]] !== EMPTY) return 'occupied';
     if (topo.gravity && dropY(state, pieceIndex, orient, x, z, true) !== y) return 'float';
     for (i = 0; i < idx.length; i++) {
       var e = topo.edges[idx[i]];
       for (k = 0; k < e.length; k++) if (board[e[k]] === p) return 'edge';
-    }
-    if (state.drop) {
-      for (i = 0; i < idx.length; i++) if (state.drop[idx[i]]) return null;
     }
     if (player.placed === 0) {
       for (i = 0; i < idx.length; i++) if (player.startIdx.indexOf(idx[i]) >= 0) return null;
@@ -1124,19 +858,6 @@
     if (state.topo.dims === 3) record.z = action.z;
     state.actions.push(record);
     state.lastMove = { player: p, piece: action.piece, cells: cells };
-    if (state.words) {
-      var before = ruleKey(state.rules);
-      var pushed = pushWords(state, cells.map(function (c) { return cellIndex(state.topo, c); }));
-      if (pushed.length) {
-        state.lastMove.pushed = pushed;
-        state.rules = readRules(state);
-        if (ruleKey(state.rules) !== before) {
-          applyRules(state);
-          state.players.forEach(function (pl) { if (!pl.resigned) pl.done = false; });
-          state.events.push({ type: 'rules', player: p, at: state.actions.length, rules: state.rules.slice() });
-        }
-      }
-    }
     advance(state);
     return null;
   }
@@ -1152,10 +873,6 @@
     return state;
   }
 
-  function ruleKey(rules) {
-    return (rules || []).map(function (r) { return r.noun + ':' + r.prop; }).sort().join(',');
-  }
-
   // 官方计分：每个未放置的格子 -1；全部放完 +15，最后一块是单格再 +5（宝石阵没有奖励分）
   function scoreOf(player) {
     var s = 0 - player.remainingSquares;
@@ -1168,14 +885,11 @@
 
   function standings(state) {
     var total = state.set.total;
-    var ds = state.districts ? districtStatus(state) : null;
     var rows = state.players.map(function (pl) {
       return {
         index: pl.index,
         player: pl,
-        score: ds ? ds.totals[pl.index] : scoreOf(pl),
-        districts: ds ? ds.won[pl.index] : undefined,
-        wins: ds ? ds.wins[pl.index] : 0,
+        score: scoreOf(pl),
         placedSquares: total - pl.remainingSquares,
         remainingSquares: pl.remainingSquares,
         piecesLeft: pl.remaining.filter(Boolean).length,
@@ -1183,11 +897,10 @@
         monoLast: pl.remainingSquares === 0 && !pl.noBonus && pl.lastPiece === Pieces.MONOMINO
       };
     });
-    // 律令「胜利」：拿下胜利地盘的人排在前面
-    rows.sort(function (a, b) { return (b.wins > 0) - (a.wins > 0) || b.score - a.score || b.placedSquares - a.placedSquares || a.index - b.index; });
+    rows.sort(function (a, b) { return b.score - a.score || b.placedSquares - a.placedSquares || a.index - b.index; });
     var rank = 0;
     rows.forEach(function (r, i) {
-      if (i === 0 || r.score !== rows[i - 1].score || (r.wins > 0) !== (rows[i - 1].wins > 0)) rank = i + 1;
+      if (i === 0 || r.score !== rows[i - 1].score) rank = i + 1;
       r.rank = rank;
     });
     return rows;
@@ -1196,16 +909,6 @@
   return {
     EMPTY: EMPTY,
     BLOCKED: BLOCKED,
-    WORD: WORD,
-    STOP: STOP,
-    NOUNS: NOUNS,
-    PROPS: PROPS,
-    WORDS: WORDS,
-    districtLayout: districtLayout,
-    districtStatus: districtStatus,
-    readRules: readRules,
-    pushWords: pushWords,
-    _applyRules: applyRules,
     MODES: MODES,
     SETS: SETS,
     isMode: isMode,

@@ -37,12 +37,12 @@
   function makeContext(state, p) {
     var topo = state.topo;
     var forb = Engine.forbiddenMask(state.board, topo, p);
-    var own = Engine.anchorMask(state.board, topo, p, state.players[p], forb, state.drop);
+    var own = Engine.anchorMask(state.board, topo, p, state.players[p], forb);
     var opp = new Uint8Array(topo.n);
     state.players.forEach(function (pl, o) {
       if (o === p || pl.done) return;
       var f = Engine.forbiddenMask(state.board, topo, o);
-      var a = Engine.anchorMask(state.board, topo, o, pl, f, state.drop);
+      var a = Engine.anchorMask(state.board, topo, o, pl, f);
       for (var i = 0; i < a.list.length; i++) opp[a.list[i]]++;
     });
     return {

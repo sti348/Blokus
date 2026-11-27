@@ -1606,7 +1606,7 @@
       game.viewPlayer = null;
       game.perPiece = Engine.movesPerPiece(st, st.current);
       var forb = Engine.forbiddenMask(st.board, st.topo, st.current);
-      game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb, st.drop);
+      game.anchors = Engine.anchorMask(st.board, st.topo, st.current, pl, forb);
       game.anchorDots = game.anchors.list;
       game.anchorsT0 = performance.now();
       if (ANCHOR_MS) animate();
